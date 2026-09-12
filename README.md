@@ -25,7 +25,7 @@ The IPCC assessments bring together scientific, technical and socio economic kno
 
 These sample pages from IPCC reports show how much information can exist within a single scientific page
 
-> 👉 This is the kind of information SemanticLens aims to make searchable and interrogable as a whole
+> 👉 This is the kind of information Lens aims to make searchable and interrogable as a whole
   
 A reader looking for one specific piece of evidence may need to search through hundreds of pages, understand specialised terminology, locate the relevant figure or table, interpret its legend or labels and connect it back to the surrounding discussion
 
@@ -73,7 +73,7 @@ When a user asks a question, SemanticLens performs a `Similarity Search` against
 
 This first ranking is intentionally broad: Its job is to quickly reduce a large document to a manageable set of likely candidates
 
-The Top K pages are then passed through a `Re Ranking stage`. Re Ranking examines the strongest candidates more carefully and can use additional information including the query, visual relevance and information from the Semantic Page Map to decide which pages or regions contain the strongest evidence
+The Top K pages are then passed through a `Re Ranking stage`. Re Ranking examines the strongest candidates more carefully and can use additional information including the query, visual relevance and information from the Spatial Page Map to decide which pages or regions contain the strongest evidence
 
 > [!IMPORTANT]
 > Only this final smaller set of evidence is passed to the VLM for visual interrogation
@@ -85,13 +85,13 @@ The result is a pipeline that can search large scientific reports efficiently wh
 
 <hr>
 
-### Semantic Page Map 🗺️
+### Spatial Page Map 🗺️
 
 > Giving Structure and Meaning to the Page
 
 Visual retrieval can tell us which pages are likely to matter but reliable interrogation also benefits from knowing what actually exists on those pages
 
-SemanticLens therefore creates a Semantic Page Map for every page
+SemanticLens therefore creates a Spatial Page Map for every page
 
 The map begins with a layout aware analysis of the page. Instead of treating the page as one flat image, it is broken into structured regions. Each region receives information such as:
 
@@ -131,12 +131,12 @@ A simplified representation might look like:
 > [!NOTE]
 > Its exact JSON schema, region types and semantic fields will be refined during implementation
 
-The Semantic Page Map is intended to remain machine readable most likely as `JSON` so it can be reused during Re Ranking, passed alongside selected pages to the VLM and inspected or tested independently
+The Spatial Page Map is intended to remain machine readable most likely as `JSON` so it can be reused during Re Ranking, passed alongside selected pages to the VLM and inspected or tested independently
 
-The Semantic Page Map helps SemanticLens know not only what a page looks like but what its parts are and how they fit together
+The Spatial Page Map helps SemanticLens know not only what a page looks like but what its parts are and how they fit together
 
 > [!IMPORTANT]
-> During visual interrogation, the selected page image is passed to the VLM together with its Semantic Page Map. The model therefore receives both the original visual evidence and structured information about the page rather than having to reconstruct the entire layout from scratch
+> During visual interrogation, the selected page image is passed to the VLM together with its Spatial Page Map. The model therefore receives both the original visual evidence and structured information about the page rather than having to reconstruct the entire layout from scratch
 
 <hr>
 
