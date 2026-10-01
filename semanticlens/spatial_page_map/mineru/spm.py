@@ -16,6 +16,7 @@ def create_spatial_page_map(
     pages: Sequence[int] | None = None,
     include_fields: Sequence[str] | None = None,
     exclude_fields: Sequence[str] | None = None,
+    tier: str = "standard",
 ) -> dict[str, Any]:
     
     if include_fields is not None and exclude_fields is not None:
@@ -60,7 +61,7 @@ def create_spatial_page_map(
         if destination.is_dir():
             raise ValueError("output_path must name a file, not a directory")
 
-    model = parse_pdf(path)
+    model = parse_pdf(path, tier=tier)
     result = model.model_dump(mode="json", exclude_none=True)
     result["document"]["sha256"] = digest
     available = {page["page_idx"] for page in result["pages"]}

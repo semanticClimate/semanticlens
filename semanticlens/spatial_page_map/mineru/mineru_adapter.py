@@ -4,8 +4,14 @@ from typing import Any
 
 from ..schema import Document, Page, Parser, Region, SpatialPageMap
 
+ALLOWED_TIERS = {"flush", "basic", "standard", "advanced"}
 
-def parse_pdf(path: Path) -> SpatialPageMap:
+def parse_pdf(path: Path, tier: str = "standard") -> SpatialPageMap:
+    if tier not in ALLOWED_TIERS:
+        raise ValueError(
+            f"Invalid tier: {tier!r}. "
+            f"Allowed tiers: {', '.join(sorted(ALLOWED_TIERS))}"
+        )
     try:
         installed = version("mineru")
     except PackageNotFoundError as exc:
@@ -19,7 +25,7 @@ def parse_pdf(path: Path) -> SpatialPageMap:
 
     from mineru.parser import parse
 
-    result = parse(path, tier="standard", ocr_mode="auto", page_range="")
+    result = parse(path, tier=tier, ocr_mode="auto", page_range="")
     raw = result.middle_json.to_dict()
 
     return _normalize(raw, path.name)
