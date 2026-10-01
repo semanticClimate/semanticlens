@@ -4,7 +4,7 @@ from typing import Any
 
 from ..schema import Document, Page, Parser, Region, SpatialPageMap
 
-ALLOWED_TIERS = {"flush", "basic", "standard", "advanced"}
+ALLOWED_TIERS = {"flash", "basic", "standard", "advanced"}
 
 def parse_pdf(path: Path, tier: str = "standard") -> SpatialPageMap:
     if tier not in ALLOWED_TIERS:
