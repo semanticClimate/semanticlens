@@ -4,7 +4,7 @@
 
 <br>
 
-SemanticLens is an open source tool which combines visual and structural understanding of scientific documents to help connect questions and answers back to the exact evidence they come from
+SemanticLens is an open source `Visual Document Retrieval Toolkit` focused on making scientific information in climate reports easier to discover and access
 
 It aims to connect every answer back to the original evidence making complex climate knowledge easier to search, inspect and use
 
