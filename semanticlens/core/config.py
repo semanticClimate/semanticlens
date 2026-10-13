@@ -1,8 +1,9 @@
 """
 Shared configuration for the SemanticLens pipeline
 
-Only settings used across pipeline components belong here. Embedding models,
-PDF processors and vector databases manage their own specific settings
+Only settings used across pipeline components belong here
+
+Embedding models, PDF processors and vector databases manage their own specific settings
 """
 
 from __future__ import annotations
@@ -15,8 +16,7 @@ class PipelineConfig(CoreSchema):
     """
     Settings for indexing documents and searching for evidence
 
-    The workspace is a location for persistent data not a directory created
-    by this class
+    The workspace is a location for persistent data not a directory created by this class
     The pipeline decides when to create or open it
     """
 
@@ -38,7 +38,9 @@ class PipelineConfig(CoreSchema):
     @field_validator("workspace", mode="before")
     @classmethod
     def accept_workspace_path(cls, value: object, info: ValidationInfo) -> object:
-        """Accept a Path or a non empty path string"""
+        """
+        Accept a Path or a non empty path string
+        """
         if isinstance(value, str):
             if not value.strip():
                 raise ValueError("workspace must not be empty")

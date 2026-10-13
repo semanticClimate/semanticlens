@@ -49,7 +49,7 @@ class SemanticLens:
     Indexing writes evidence metadata before vectors, so a newly searchable
     vector has a source reference. Writes are not transactional: if a batch
     fails, earlier batches (or some records in that batch) may remain stored.
-    Re-indexing the same IDs is supported by the component upsert contracts.
+    Re indexing the same IDs is supported by the component upsert contracts.
     """
 
     def __init__(
@@ -130,7 +130,9 @@ class SemanticLens:
     def search(
         self, query: str | Query, *, top_k: int | None = None
     ) -> list[SearchHit]:
-        """Find relevant evidence and return source-linked results in rank order."""
+        """
+        Find relevant evidence and return source linked results in rank order
+        """
         self._require_open()
         self._check_embedding_compatibility()
 
@@ -184,7 +186,9 @@ class SemanticLens:
         return list(hits)
 
     def close(self) -> None:
-        """Close components that provide a close() method; safe to call twice."""
+        """
+        Close components that provide a close() method; safe to call twice
+        """
         if self._closed:
             return
         self._closed = True
@@ -215,7 +219,9 @@ class SemanticLens:
             ) from first_error
 
     def __enter__(self) -> SemanticLens:
-        """Use the pipeline with a ``with`` block for automatic cleanup."""
+        """
+        Use the pipeline with a `with` block for automatic cleanup
+        """
         self._require_open()
         return self
 

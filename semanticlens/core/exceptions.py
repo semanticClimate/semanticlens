@@ -2,7 +2,7 @@
 Exceptions used across the SemanticLens pipeline
 
 Catch a specific exception when you can handle that failure or catch
-SemanticLensError to handle any SemanticLens specific failure
+SemanticLensError to handle any SemanticLens specific failure.
 
 When wrapping an error from another library use `raise ... from error`
 to preserve the original cause.

@@ -1,4 +1,6 @@
-"""Public API for SemanticLens core components"""
+"""
+Public API for SemanticLens core components
+"""
 
 from .config import PipelineConfig
 from .interfaces import (

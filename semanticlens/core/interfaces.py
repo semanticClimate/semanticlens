@@ -126,6 +126,7 @@ class Retriever(Protocol):
 
         top_k must be positive. The pipeline passes its own embedder
         and index, so retrieval uses the same components as indexing. 
+
         A retrieval strategy may also use additional dependencies configured on its implementation.
         """
         ...
@@ -149,6 +150,7 @@ class EvidenceResolver(Protocol):
         Return complete search hits in the same order as the candidates.
 
         Every candidate must resolve to its original document and page.
+        
         Missing evidence should raise a clear error rather than silently
         dropping or misattributing a result
         """

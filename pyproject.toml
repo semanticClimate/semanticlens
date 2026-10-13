@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semanticlens"
+version = "0.1.0a1"
+description = "An extensible Python toolkit for visual document retrieval"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+keywords = [
+    "visual-document-retrieval",
+    "multimodal-retrieval",
+    "document-search",
+    "climate-science",
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "pydantic>=2.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2",
+    "pytest>=8.0",
+    "ruff>=0.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/semanticClimate/semanticlens"
+Repository = "https://github.com/semanticClimate/semanticlens"
+Issues = "https://github.com/semanticClimate/semanticlens/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["semanticlens*"]
+namespaces = false
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
