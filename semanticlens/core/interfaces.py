@@ -1,13 +1,8 @@
-"""
-Interfaces that connect the SemanticLens pipeline components
+"""Component contracts for the SemanticLens document intelligence pipeline.
 
-These contracts define what each component must do not how it does it
-
-A PDF processor, embedding model or vector database can be replaced as long
-as its implementation follows the same interface
-
-Interfaces use only shared Core types. Model inference, PDF rendering and
-vector database operations belong in their respective modules
+The protocols describe how components exchange Core data structures without
+coupling the pipeline to a particular parser, model, or storage backend.
+Concrete implementations and their dependencies live in their own modules.
 """
 
 from __future__ import annotations
@@ -19,6 +14,7 @@ from typing import Protocol, TypeAlias
 from .schemas import (
     EmbeddingSpec,
     EvidenceUnit,
+    GenerationDraft,
     Query,
     RetrievalCandidate,
     SearchHit,
@@ -28,90 +24,66 @@ Vector: TypeAlias = Sequence[float]
 Embedding: TypeAlias = Vector | Sequence[Vector]
 IndexMatch: TypeAlias = tuple[str, float]
 
+
 class DocumentProcessor(Protocol):
-    """
-    Turn a PDF into searchable evidence units and their page images
-    """
+    """Turn a source PDF into evidence units and their rendered page images."""
 
     def process(self, pdf_path: Path) -> Iterable[EvidenceUnit]:
-        """
-        Process one PDF and yield its evidence units
+        """Yield evidence units for one PDF.
 
-        For visual retrieval, each page unit must have an image_ref that
-        the embedder can use to load the rendered page. A directory of PDFs
-        is handled by the pipeline, not by this method.
+        Each page used for visual retrieval must have an ``image_ref`` that
+        the embedding implementation can resolve. Directory traversal belongs
+        to the pipeline, not the processor.
         """
         ...
 
 
 class Embedder(Protocol):
-    """
-    Create compatible embeddings for document units and text queries
-    """
+    """Create compatible embeddings for evidence units and text queries."""
 
     @property
     def spec(self) -> EmbeddingSpec:
-        """
-        Describe the model and preprocessing used for these embeddings
-        """
+        """Describe the embeddings produced by this implementation."""
         ...
 
     def embed_units(self, units: Sequence[EvidenceUnit]) -> Sequence[Embedding]:
-        """
-        Embed a batch of evidence units, preserving their input order
+        """Return one embedding per unit, preserving input order.
 
-        Return exactly one embedding per input unit. Each embedding must
-        match spec including its vector dimension and representation
-
-        Model specific tensors are converted to numeric sequences here
+        Each embedding must match ``spec``. Backend tensors are converted to
+        plain numerical sequences before crossing the Core boundary.
         """
         ...
 
     def embed_query(self, query: Query) -> Embedding:
-        """
-        Embed a text query using the same embedding specification
-        """
+        """Encode a query using the embedding representation in ``spec``."""
         ...
 
 
 class VectorIndex(Protocol):
-    """
-    Store evidence embeddings and search them by similarity
-    """
+    """Store and search evidence embeddings using a compatible specification."""
 
     @property
     def spec(self) -> EmbeddingSpec:
-        """
-        Describe the embeddings this index accepts and searches
-        """
+        """Describe the representation accepted by this index."""
         ...
 
     def upsert(self, vectors: Mapping[str, Embedding]) -> None:
-        """
-        Store embeddings by unit ID, replacing any existing entries
-
-        Each embedding must match spec. The index receives only IDs
-        and embeddings; source details are resolved separately.
-        """
+        """Store embeddings by evidence ID, replacing existing entries."""
         ...
 
     def search(
         self, query_embedding: Embedding, *, top_k: int
     ) -> Sequence[IndexMatch]:
-        """
-        Return up to top_k (unit ID, score) pairs, best match first
+        """Return up to ``top_k`` ranked (evidence ID, score) matches.
 
-        top_k must be positive. Scores are retrieval similarities,
-        not probabilities. The index implementation performs the 
-        interaction defined by spec (such as MaxSim for multi-vector embeddings)
+        The index performs the interaction specified by ``spec``. Retrieval
+        scores are similarity values, not probabilities.
         """
         ...
 
 
 class Retriever(Protocol):
-    """
-    Turn a user query into ranked evidence candidates
-    """
+    """Find ranked evidence candidates for a query."""
 
     def retrieve(
         self,
@@ -121,37 +93,61 @@ class Retriever(Protocol):
         index: VectorIndex,
         top_k: int,
     ) -> Sequence[RetrievalCandidate]:
-        """
-        Use the supplied components to retrieve relevant evidence IDs
+        """Retrieve evidence IDs using the provided embedding and index components.
 
-        top_k must be positive. The pipeline passes its own embedder
-        and index, so retrieval uses the same components as indexing. 
-
-        A retrieval strategy may also use additional dependencies configured on its implementation.
+        ``top_k`` must be positive. Retrieval strategies may use additional
+        dependencies configured on their concrete implementations.
         """
         ...
 
 
 class EvidenceResolver(Protocol):
-    """
-    Store source references and attach them to retrieval results
-    """
+    """Persist evidence metadata and resolve ranked candidates to sources."""
 
     def add(self, units: Sequence[EvidenceUnit]) -> None:
-        """
-        Persist evidence metadata by unit ID, replacing existing records
-        """
+        """Persist evidence by unit ID, replacing records with matching IDs."""
         ...
 
     def resolve(
         self, candidates: Sequence[RetrievalCandidate]
     ) -> Sequence[SearchHit]:
-        """
-        Return complete search hits in the same order as the candidates.
+        """Resolve every candidate without changing its order, score, or label.
 
-        Every candidate must resolve to its original document and page.
-        
-        Missing evidence should raise a clear error rather than silently
-        dropping or misattributing a result
+        Missing evidence is an error: never silently drop or substitute a
+        source for a retrieved candidate.
+        """
+        ...
+
+
+class Generator(Protocol):
+    """Produce a structured answer draft using resolved document evidence.
+
+    The generator receives a ``Query`` and the exact ``SearchHit`` objects
+    selected for generation. A visual implementation reads the referenced
+    source images and prepares its multimodal model input internally; Core
+    does not depend on image or model libraries.
+
+    Draft evidence IDs are *claims* made by the model, not verified citations.
+    Downstream grounding must resolve them against the supplied hits before
+    constructing an ``AnswerResult``.
+    """
+
+    def generate(
+        self, query: Query, *, hits: Sequence[SearchHit]
+    ) -> GenerationDraft:
+        """Return an untrusted structured answer draft for the given evidence.
+
+        - Use only evidence from ``hits``; do not invent document references.
+        - Refer to sources using actual ``EvidenceUnit.unit_id`` values, not
+          temporary prompt labels or model-generated page numbers.
+        - Do not silently exclude supplied hits while keeping them eligible
+          for citation. Any evidence limit must be applied before this call.
+        - For empty ``hits``, return an ``insufficient_evidence`` draft without
+          invoking the model to guess an answer.
+        - Do not mutate ``query`` or the supplied evidence.
+
+        Model selection, inference options, image loading and failure handling
+        belong to the concrete generator. The pipeline may call its optional
+        ``close()`` method during cleanup, as with other components.
         """
         ...

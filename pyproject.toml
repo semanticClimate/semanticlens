@@ -41,6 +41,14 @@ dependencies = [
 
 [project.optional-dependencies]
 
+# Qwen3-VL reference generation backend.
+# PyTorch is provided by sentence-transformers; install a GPU-compatible
+# PyTorch build for your hardware separately if the default is unsuitable.
+generation = [
+    "transformers[vision]>=5.0,<6",
+    "accelerate>=1.3,<2",
+]
+
 # Optional structured PDF parsing.
 # Not required for the main SemanticLens pipeline.
 mineru = [

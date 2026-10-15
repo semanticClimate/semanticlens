@@ -160,3 +160,142 @@ class IndexSummary(CoreSchema):
     documents_processed: int = Field(ge=0)
     units_indexed: int = Field(ge=0)
     units_skipped: int = Field(default=0, ge=0)
+
+
+class GeneratedStatement(CoreSchema):
+    """One answer statement and the retrieved evidence units it refers to.
+
+    The generator must resolve any short prompt labels (such as E1 or E2) to
+    actual EvidenceUnit.unit_id values before producing this object. A reference
+    here is only a model assertion until validated against the retrieved hits.
+    """
+
+    text: str = Field(min_length=1)
+    evidence_ids: tuple[str, ...] = ()
+
+    @field_validator("text")
+    @classmethod
+    def nonblank_statement(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("statement text must not be blank")
+        return text
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def validate_evidence_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not unit_id or unit_id != unit_id.strip() for unit_id in value):
+            raise ValueError("evidence IDs must be nonblank and have no surrounding whitespace")
+        if len(value) != len(set(value)):
+            raise ValueError("evidence IDs within a statement must be unique")
+        return value
+
+
+class GenerationDraft(CoreSchema):
+    """Untrusted, structured output from a generation backend.
+
+    These references have not yet been checked against SearchHit objects.
+    The grounding stage validates them and constructs an AnswerResult.
+    """
+
+    status: Literal["answered", "insufficient_evidence"]
+    statements: tuple[GeneratedStatement, ...] = Field(min_length=1)
+    model_id: str = Field(min_length=1)
+    model_revision: str | None = Field(default=None, min_length=1)
+
+    @field_validator("model_id", "model_revision")
+    @classmethod
+    def validate_model_identity(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or value != value.strip()):
+            raise ValueError("model identity must be nonblank without surrounding whitespace")
+        return value
+
+    @model_validator(mode="after")
+    def validate_answered_statements(self) -> GenerationDraft:
+        if self.status == "answered" and any(
+            not statement.evidence_ids for statement in self.statements
+        ):
+            raise ValueError("every answered statement must cite at least one evidence unit")
+        return self
+
+
+class AnswerCitation(CoreSchema):
+    """A numbered citation pointing to a real, resolved evidence unit."""
+
+    number: int = Field(gt=0)
+    evidence: EvidenceUnit
+
+    @property
+    def marker(self) -> str:
+        """Citation marker inserted into the rendered answer, e.g. '[1]'."""
+        return f"[{self.number}]"
+
+
+class AnswerResult(CoreSchema):
+    """Final result of a grounded question-answering operation.
+
+    The grounding stage builds this from a validated GenerationDraft and the
+    exact SearchHit objects used for generation. Citation references are
+    checked structurally; scientific support is not automatically proven.
+    """
+
+    query: Query
+    answer: str = Field(min_length=1)
+    status: Literal["answered", "insufficient_evidence"]
+    statements: tuple[GeneratedStatement, ...] = Field(min_length=1)
+    citations: tuple[AnswerCitation, ...] = ()
+    hits: tuple[SearchHit, ...] = ()
+    model_id: str = Field(min_length=1)
+    model_revision: str | None = Field(default=None, min_length=1)
+
+    @field_validator("answer")
+    @classmethod
+    def nonblank_answer(cls, value: str) -> str:
+        answer = value.strip()
+        if not answer:
+            raise ValueError("answer must not be blank")
+        return answer
+
+    @field_validator("model_id", "model_revision")
+    @classmethod
+    def validate_model_identity(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or value != value.strip()):
+            raise ValueError("model identity must be nonblank without surrounding whitespace")
+        return value
+
+    @model_validator(mode="after")
+    def validate_citations(self) -> AnswerResult:
+        if self.status == "answered":
+            if not self.citations:
+                raise ValueError("an answered result must have at least one citation")
+            if any(not statement.evidence_ids for statement in self.statements):
+                raise ValueError("every answered statement must cite evidence")
+
+        hit_by_id = {hit.evidence.unit_id: hit.evidence for hit in self.hits}
+        if len(hit_by_id) != len(self.hits):
+            raise ValueError("retrieved hits must have unique evidence IDs")
+
+        if tuple(citation.number for citation in self.citations) != tuple(
+            range(1, len(self.citations) + 1)
+        ):
+            raise ValueError("citation numbers must be consecutive, starting at 1")
+
+        cited_ids: set[str] = set()
+        for citation in self.citations:
+            unit_id = citation.evidence.unit_id
+            if unit_id in cited_ids:
+                raise ValueError("each evidence unit can have only one citation number")
+            cited_ids.add(unit_id)
+
+            if hit_by_id.get(unit_id) != citation.evidence:
+                raise ValueError("citations must refer to the original retrieved evidence")
+            if citation.marker not in self.answer:
+                raise ValueError(f"citation marker {citation.marker} is missing from the answer")
+
+        referenced_ids = {
+            unit_id for statement in self.statements for unit_id in statement.evidence_ids
+        }
+        if referenced_ids != cited_ids:
+            raise ValueError("statement evidence IDs must match the validated citations")
+
+        return self

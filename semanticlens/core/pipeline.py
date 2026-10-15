@@ -1,8 +1,7 @@
-"""
-Connect the SemanticLens components into an indexing and search pipeline
+"""Connect the SemanticLens components into an indexing and search pipeline.
 
 This module controls the order of operations. PDF rendering, embedding models,
-vector databases and evidence storage are implemented by other modules
+vector databases, and evidence storage are implemented by other modules.
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ from .exceptions import (
     EmbeddingCompatibilityError,
     EmbeddingError,
     EvidenceResolutionError,
+    GenerationError,
     IndexOperationError,
     RetrievalError,
     SemanticLensError,
@@ -26,12 +26,15 @@ from .interfaces import (
     DocumentProcessor,
     Embedder,
     EvidenceResolver,
+    Generator,
     Retriever,
     VectorIndex,
 )
 from .schemas import (
+    AnswerResult,
     EmbeddingSpec,
     EvidenceUnit,
+    GenerationDraft,
     IndexSummary,
     Query,
     RetrievalCandidate,
@@ -42,14 +45,15 @@ from .schemas import (
 class SemanticLens:
     """Index PDF evidence and retrieve matching pages using pluggable components.
 
-    Supply implementations of the five Core interfaces. The pipeline does not
-    create those components or manage their storage locations; configure them
-    separately to use the same workspace and persistent collection.
+    Supply the five retrieval components and, optionally, a Generator for
+    evidence-grounded question answering. Without a generator, indexing and
+    search retain their existing behavior. The pipeline does not construct
+    components or choose their storage locations.
 
     Indexing writes evidence metadata before vectors, so a newly searchable
     vector has a source reference. Writes are not transactional: if a batch
     fails, earlier batches (or some records in that batch) may remain stored.
-    Re indexing the same IDs is supported by the component upsert contracts.
+    Re-indexing the same IDs is supported by the component upsert contracts.
     """
 
     def __init__(
@@ -61,6 +65,7 @@ class SemanticLens:
         retriever: Retriever,
         resolver: EvidenceResolver,
         config: PipelineConfig | None = None,
+        generator: Generator | None = None,
     ) -> None:
         if config is not None and not isinstance(config, PipelineConfig):
             raise ConfigurationError("config must be a PipelineConfig instance")
@@ -72,6 +77,9 @@ class SemanticLens:
             ("retriever", retriever, ("retrieve",)),
             ("resolver", resolver, ("add", "resolve")),
         )
+        if generator is not None:
+            components += (("generator", generator, ("generate",)),)
+
         for name, component, methods in components:
             for method in methods:
                 if not callable(getattr(component, method, None)):
@@ -83,6 +91,7 @@ class SemanticLens:
         self._vector_index = index
         self._retriever = retriever
         self._resolver = resolver
+        self._generator = generator
         self._closed = False
         self._check_embedding_compatibility()
 
@@ -130,9 +139,7 @@ class SemanticLens:
     def search(
         self, query: str | Query, *, top_k: int | None = None
     ) -> list[SearchHit]:
-        """
-        Find relevant evidence and return source linked results in rank order
-        """
+        """Find relevant evidence and return source-linked results in rank order."""
         self._require_open()
         self._check_embedding_compatibility()
 
@@ -185,10 +192,59 @@ class SemanticLens:
 
         return list(hits)
 
+    def ask(
+        self, query: str | Query, *, top_k: int | None = None
+    ) -> AnswerResult:
+        """Answer a question using retrieved evidence and a configured generator.
+
+        Retrieval uses exactly the same path as ``search()``. The generator
+        receives the resulting hits in rank order and returns an untrusted
+        ``GenerationDraft``. Grounding verifies that every cited evidence ID
+        belongs to those hits before constructing an ``AnswerResult``.
+
+        When no generator is configured, raise ``ConfigurationError`` without
+        searching. Insufficient evidence is a normal answer status, whereas
+        inference failures or invalid generated references raise
+        ``GenerationError``. Cited pages are not guaranteed to entail a claim.
+        """
+        self._require_open()
+        if self._generator is None:
+            raise ConfigurationError(
+                "No generator configured; pass generator=... to SemanticLens"
+            )
+
+        if isinstance(query, str):
+            query = Query(text=query)
+        elif not isinstance(query, Query):
+            raise TypeError("query must be a string or Query instance")
+
+        # Delegate retrieval and top_k validation to the existing search path.
+        # Use the same immutable hit snapshot for generation and grounding.
+        hits = tuple(self.search(query, top_k=top_k))
+
+        try:
+            draft = self._generator.generate(query, hits=hits)
+        except SemanticLensError:
+            raise
+        except Exception as exc:
+            raise GenerationError("Failed to generate an answer from evidence") from exc
+
+        if not isinstance(draft, GenerationDraft):
+            raise GenerationError("Generator must return a GenerationDraft")
+
+        try:
+            # Imported only when asking questions: retrieval-only users do not
+            # need the generation package, models, or their dependencies.
+            from semanticlens.generation.grounding import build_answer_result
+
+            return build_answer_result(query, draft=draft, hits=hits)
+        except SemanticLensError:
+            raise
+        except Exception as exc:
+            raise GenerationError("Failed to construct a grounded answer") from exc
+
     def close(self) -> None:
-        """
-        Close components that provide a close() method; safe to call twice
-        """
+        """Close components that provide a close() method; safe to call twice."""
         if self._closed:
             return
         self._closed = True
@@ -196,6 +252,7 @@ class SemanticLens:
         closed_ids: set[int] = set()
 
         for component in (
+            self._generator,
             self._resolver,
             self._retriever,
             self._vector_index,
@@ -219,9 +276,7 @@ class SemanticLens:
             ) from first_error
 
     def __enter__(self) -> SemanticLens:
-        """
-        Use the pipeline with a `with` block for automatic cleanup
-        """
+        """Use the pipeline with a ``with`` block for automatic cleanup."""
         self._require_open()
         return self
 
