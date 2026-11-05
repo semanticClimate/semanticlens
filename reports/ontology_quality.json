@@ -1,0 +1,59 @@
+{
+  "report_type": "ontology_build_quality",
+  "build_version": "2.0",
+  "generated_at": "2026-11-02T07:39:10+00:00",
+  "inputs": {
+    "corpus_sha256": "2be04603057d3a2e0c8f330cb686d252f0628da3ab06ce55e9ae6ab7fcfaf3c2",
+    "concepts_sha256": "c51a3775f86dd70afca5ee064125152496533a5b489eb81b786b1ec3c50bcbfc",
+    "vocabulary_sha256": "080961c6d64d4dbc6ce404be98ee221a85740995a2a384de008b7c28ea926ef2",
+    "corpus_path": "/Users/neelkumar/Documents/open-source/IPCC-visual-knowledge-graph/data/processed/corpus.db",
+    "concepts_path": "/Users/neelkumar/Documents/open-source/IPCC-visual-knowledge-graph/data/processed/concepts.db",
+    "vocabulary_path": "/Users/neelkumar/Documents/open-source/IPCC-visual-knowledge-graph/data/processed/ipcc_ar6_vocabulary.json"
+  },
+  "summary": {
+    "figures": 1310,
+    "figures_with_captions": 1297,
+    "concepts": 920,
+    "image_references": 1355,
+    "resolved_mentions": 10259,
+    "total_mentions": 10398,
+    "unresolved_mentions": 139,
+    "excluded_mentions": 139,
+    "figure_concept_links": 6178,
+    "candidate_links": 10935,
+    "rdf_triples": 20782,
+    "schema_triples": 46,
+    "relationship_triples": 20736
+  },
+  "by_working_group": {
+    "WG1": {
+      "figures": 510,
+      "figure_concept_links": 2895,
+      "distinct_linked_concepts": 327
+    },
+    "WG2": {
+      "figures": 453,
+      "figure_concept_links": 2021,
+      "distinct_linked_concepts": 261
+    },
+    "WG3": {
+      "figures": 347,
+      "figure_concept_links": 1262,
+      "distinct_linked_concepts": 189
+    }
+  },
+  "validation": {
+    "rdf_integrity": "passed",
+    "shacl": "passed",
+    "shacl_shapes": 2
+  },
+  "notes": [
+    "The only instance-to-instance edge is Figure -> mentionsConcept -> ScientificConcept.",
+    "Caption mentions and exclusion candidates remain in concepts.db, not as graph nodes.",
+    "Image URLs, working group and section are Figure attributes, not graph nodes.",
+    "Accepted Figure--Concept links are caption matches, not proof of image depiction or causality.",
+    "Full captions and glossary definitions are omitted unless explicitly permitted and opted in.",
+    "Scientific extraction accuracy needs human review; RDF structural validity is not scientific validity.",
+    "Published IPCC material and glossary-derived content may have reuse restrictions."
+  ]
+}

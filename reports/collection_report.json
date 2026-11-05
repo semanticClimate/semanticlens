@@ -1,0 +1,214 @@
+{
+  "schema_version": "1.0",
+  "report_type": "raw_collection",
+  "generated_at": "2026-10-20T08:46:46+00:00",
+  "scope": "IPCC AR6 Working Group figures (linked pages only)",
+  "working_groups": [
+    {
+      "working_group": "WG1",
+      "seed_url": "https://www.ipcc.ch/report/ar6/wg1/figures/",
+      "status": "partial",
+      "visited_pages": 528,
+      "pages_processed_this_run": 535,
+      "figures_collected": 510,
+      "figures_missing_caption": 1,
+      "figures_missing_image": 0,
+      "figures_by_section": {
+        "annex-iv": 10,
+        "annex-v": 1,
+        "atlas": 33,
+        "chapter-1": 37,
+        "chapter-10": 26,
+        "chapter-11": 28,
+        "chapter-12": 17,
+        "chapter-2": 43,
+        "chapter-3": 49,
+        "chapter-4": 47,
+        "chapter-5": 45,
+        "chapter-6": 30,
+        "chapter-7": 28,
+        "chapter-8": 32,
+        "chapter-9": 37,
+        "summary-for-policymakers": 10,
+        "technical-summary": 37
+      },
+      "pending_pages": 0,
+      "failed_pages": 7,
+      "failures": {
+        "https://www.ipcc.ch/report/ar6/wg1/figures/chapter-7/ccbox-7-1-figure-1/": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg1/figures/chapter-7/ccbox-7-1-figure-1/",
+          "last_attempt_at": "2026-10-20T08:20:24+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg1/figures/chapter-10/ccbox-10-3-figure-1/": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg1/figures/chapter-10/ccbox-10-3-figure-1/",
+          "last_attempt_at": "2026-10-20T08:22:49+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg1/figures/chapter-11/faq-11-3-figure-1/": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg1/figures/chapter-11/faq-11-3-figure-1/",
+          "last_attempt_at": "2026-10-20T08:23:37+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg1/figures/summary-for-policymakers/figure-spm-6/spm.html": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg1/figures/summary-for-policymakers/figure-spm-6/spm.html",
+          "last_attempt_at": "2026-10-20T08:25:10+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg1/figures/summary-for-policymakers/figure-spm-7/spm.html": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg1/figures/summary-for-policymakers/figure-spm-7/spm.html",
+          "last_attempt_at": "2026-10-20T08:25:12+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg1/figures/chapter-4/box-4-1-figure-1/</div/": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg1/figures/chapter-4/box-4-1-figure-1/%3C/div/",
+          "last_attempt_at": "2026-10-20T08:25:13+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg1/figures/chapter-10/figure-10-16/</div/": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg1/figures/chapter-10/figure-10-16/%3C/div/",
+          "last_attempt_at": "2026-10-20T08:25:15+00:00"
+        }
+      },
+      "raw_data_path": "data/raw/wg1.json"
+    },
+    {
+      "working_group": "WG2",
+      "seed_url": "https://www.ipcc.ch/report/ar6/wg2/figures/",
+      "status": "partial",
+      "visited_pages": 481,
+      "pages_processed_this_run": 489,
+      "figures_collected": 453,
+      "figures_missing_caption": 1,
+      "figures_missing_image": 0,
+      "figures_by_section": {
+        "chapter-1": 16,
+        "chapter-10": 12,
+        "chapter-11": 15,
+        "chapter-12": 13,
+        "chapter-13": 39,
+        "chapter-14": 15,
+        "chapter-15": 9,
+        "chapter-16": 19,
+        "chapter-17": 17,
+        "chapter-18": 13,
+        "chapter-2": 23,
+        "chapter-3": 36,
+        "chapter-4": 36,
+        "chapter-5": 32,
+        "chapter-6": 6,
+        "chapter-7": 21,
+        "chapter-8": 15,
+        "chapter-9": 43,
+        "chapter-ccp1": 14,
+        "chapter-ccp2": 4,
+        "chapter-ccp3": 2,
+        "chapter-ccp4": 9,
+        "chapter-ccp5": 7,
+        "chapter-ccp6": 10,
+        "chapter-ccp7": 5,
+        "summary-for-policymakers": 5,
+        "technical-summary": 17
+      },
+      "pending_pages": 0,
+      "failed_pages": 8,
+      "failures": {
+        "https://www.ipcc.ch/report/ar6/wg2/figures/chapter-10/figure-10-010/ch10.html": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg2/figures/chapter-10/figure-10-010/ch10.html",
+          "last_attempt_at": "2026-10-20T08:37:20+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp1/": {
+          "error_type": "HTTPError",
+          "message": "403 Client Error: Forbidden for url: https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp1/",
+          "last_attempt_at": "2026-10-20T08:37:21+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp2/": {
+          "error_type": "HTTPError",
+          "message": "403 Client Error: Forbidden for url: https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp2/",
+          "last_attempt_at": "2026-10-20T08:37:23+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp3/": {
+          "error_type": "HTTPError",
+          "message": "403 Client Error: Forbidden for url: https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp3/",
+          "last_attempt_at": "2026-10-20T08:37:24+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp4/": {
+          "error_type": "HTTPError",
+          "message": "403 Client Error: Forbidden for url: https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp4/",
+          "last_attempt_at": "2026-10-20T08:37:26+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp5/": {
+          "error_type": "HTTPError",
+          "message": "403 Client Error: Forbidden for url: https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp5/",
+          "last_attempt_at": "2026-10-20T08:37:27+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp6/": {
+          "error_type": "HTTPError",
+          "message": "403 Client Error: Forbidden for url: https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp6/",
+          "last_attempt_at": "2026-10-20T08:37:29+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp7/": {
+          "error_type": "HTTPError",
+          "message": "403 Client Error: Forbidden for url: https://www.ipcc.ch/report/ar6/wg2/figures/chapter-ccp7/",
+          "last_attempt_at": "2026-10-20T08:37:30+00:00"
+        }
+      },
+      "raw_data_path": "data/raw/wg2.json"
+    },
+    {
+      "working_group": "WG3",
+      "seed_url": "https://www.ipcc.ch/report/ar6/wg3/figures/",
+      "status": "partial",
+      "visited_pages": 367,
+      "pages_processed_this_run": 369,
+      "figures_collected": 347,
+      "figures_missing_caption": 11,
+      "figures_missing_image": 0,
+      "figures_by_section": {
+        "chapter-1": 9,
+        "chapter-10": 24,
+        "chapter-11": 15,
+        "chapter-12": 13,
+        "chapter-13": 7,
+        "chapter-14": 5,
+        "chapter-15": 8,
+        "chapter-16": 8,
+        "chapter-17": 1,
+        "chapter-2": 25,
+        "chapter-3": 48,
+        "chapter-4": 10,
+        "chapter-5": 17,
+        "chapter-6": 42,
+        "chapter-7": 21,
+        "chapter-8": 26,
+        "chapter-9": 23,
+        "summary-for-policymakers": 9,
+        "technical-summary": 36
+      },
+      "pending_pages": 0,
+      "failed_pages": 2,
+      "failures": {
+        "https://www.ipcc.ch/report/ar6/wg3/figures/technical-summary/figure-ts-11/": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg3/figures/technical-summary/figure-ts-11/",
+          "last_attempt_at": "2026-10-20T08:38:40+00:00"
+        },
+        "https://www.ipcc.ch/report/ar6/wg3/figures/chapter-5/figure-5-2/ch05.html": {
+          "error_type": "HTTPError",
+          "message": "404 Client Error: Not Found for url: https://www.ipcc.ch/report/ar6/wg3/figures/chapter-5/figure-5-2/ch05.html",
+          "last_attempt_at": "2026-10-20T08:46:46+00:00"
+        }
+      },
+      "raw_data_path": "data/raw/wg3.json"
+    }
+  ],
+  "total_figures": 1310,
+  "all_complete": false,
+  "notes": [
+    "Completeness means linked pages were visited without logged failures; it does not independently verify the IPCC site's total inventory.",
+    "Image URLs are references; image binaries were not downloaded.",
+    "IPCC image and caption reuse is subject to the IPCC copyright policy."
+  ]
+}

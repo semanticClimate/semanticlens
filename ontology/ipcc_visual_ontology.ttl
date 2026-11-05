@@ -1,0 +1,62 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix ipcc: <https://neelkumar01.github.io/IPCC-visual-knowledge-graph/ontology#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://neelkumar01.github.io/IPCC-visual-knowledge-graph/ontology> a owl:Ontology ;
+    dcterms:description "Bipartite graph connecting IPCC AR6 figures and scientific concepts through source-backed caption matches, without claiming visual depiction or causality."@en ;
+    dcterms:title "IPCC AR6 Visual Knowledge Graph Ontology"@en ;
+    rdfs:seeAlso <https://www.ipcc.ch/assessment-report/ar6/> ;
+    owl:versionInfo "0.2.0" .
+
+ipcc:captionSHA256 a owl:DatatypeProperty ;
+    rdfs:label "caption SHA-256"@en ;
+    rdfs:comment "Digest of the exact original caption where available."@en ;
+    rdfs:domain ipcc:Figure ;
+    rdfs:range xsd:string .
+
+ipcc:captionStatus a owl:DatatypeProperty ;
+    rdfs:label "caption status"@en ;
+    rdfs:comment "Whether the original figure caption is available or missing."@en ;
+    rdfs:domain ipcc:Figure ;
+    rdfs:range xsd:string .
+
+ipcc:captionText a owl:DatatypeProperty ;
+    rdfs:label "caption text"@en ;
+    rdfs:comment "Optional original caption; only include when permitted by IPCC reuse terms."@en ;
+    rdfs:domain ipcc:Figure ;
+    rdfs:range xsd:string .
+
+ipcc:imageURL a owl:DatatypeProperty ;
+    rdfs:label "image URL"@en ;
+    rdfs:comment "A published candidate image URL for the figure, without a reachability guarantee."@en ;
+    rdfs:domain ipcc:Figure ;
+    rdfs:range xsd:anyURI .
+
+ipcc:mentionsConcept a owl:ObjectProperty ;
+    rdfs:label "mentions concept"@en ;
+    rdfs:comment "The figure caption contains an accepted match for this scientific concept; the figure need not visually depict it."@en ;
+    rdfs:domain ipcc:Figure ;
+    rdfs:range ipcc:ScientificConcept .
+
+ipcc:sectionCode a owl:DatatypeProperty ;
+    rdfs:label "section code"@en ;
+    rdfs:comment "Original chapter or section identifier from the figure corpus."@en ;
+    rdfs:domain ipcc:Figure ;
+    rdfs:range xsd:string .
+
+ipcc:workingGroupCode a owl:DatatypeProperty ;
+    rdfs:label "working group code"@en ;
+    rdfs:comment "IPCC working group publishing the figure: WG1, WG2 or WG3."@en ;
+    rdfs:domain ipcc:Figure ;
+    rdfs:range xsd:string .
+
+ipcc:ScientificConcept a owl:Class ;
+    rdfs:label "Scientific concept"@en ;
+    rdfs:comment "A glossary-derived scientific term linked to figures through accepted caption matches."@en .
+
+ipcc:Figure a owl:Class ;
+    rdfs:label "Figure"@en ;
+    rdfs:comment "A figure published on an IPCC AR6 figure page."@en .
+

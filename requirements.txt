@@ -1,0 +1,5 @@
+requests
+beautifulsoup4
+pydantic>=2,<3
+rdflib>=7,<8
+pyshacl

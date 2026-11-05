@@ -1,0 +1,192 @@
+{
+  "report_type": "concept_extraction_quality",
+  "generated_at": "2026-10-20T12:11:05+00:00",
+  "method": "glossary_lexical_quality_v2",
+  "database_schema_version": 2,
+  "sources": {
+    "corpus_sha256": "2be04603057d3a2e0c8f330cb686d252f0628da3ab06ce55e9ae6ab7fcfaf3c2",
+    "vocabulary_sha256": "080961c6d64d4dbc6ce404be98ee221a85740995a2a384de008b7c28ea926ef2",
+    "vocabulary_provenance": {
+      "derived_export": "https://raw.githubusercontent.com/TIBHannover/ClimateKG-Data-Bench/main/data/glossary-ar6.html",
+      "official_glossary": "https://apps.ipcc.ch/glossary/searchlatest.php",
+      "source_sha256": "64529c4d55cc387c22158dd64ea581cf66e40a8f49feac8bcf900ea286b34b01",
+      "note": "Third-party HTML export derived from IPCC glossary; review before publication."
+    }
+  },
+  "summary": {
+    "total_figures": 1310,
+    "available_captions": 1297,
+    "missing_captions": 13,
+    "figures_with_mentions": 1236,
+    "captioned_figures_without_matches": 61,
+    "figures_with_resolved_concepts": 1215,
+    "total_mentions": 10398,
+    "resolved_mentions": 10259,
+    "ambiguous_mentions": 0,
+    "excluded_mentions": 139,
+    "formula_resolved_mentions": 507,
+    "explicit_expansion_mentions": 30,
+    "figure_concept_links": 6178,
+    "vocabulary_terms": 920,
+    "distinct_resolved_concepts": 508
+  },
+  "by_working_group": {
+    "WG1": {
+      "total_figures": 510,
+      "available_captions": 509,
+      "missing_captions": 1,
+      "figures_with_mentions": 486,
+      "captioned_figures_without_matches": 23,
+      "figures_with_resolved_concepts": 486,
+      "total_mentions": 4862,
+      "resolved_mentions": 4862,
+      "ambiguous_mentions": 0,
+      "excluded_mentions": 0,
+      "distinct_resolved_concepts": 327
+    },
+    "WG2": {
+      "total_figures": 453,
+      "available_captions": 452,
+      "missing_captions": 1,
+      "figures_with_mentions": 428,
+      "captioned_figures_without_matches": 24,
+      "figures_with_resolved_concepts": 428,
+      "total_mentions": 3242,
+      "resolved_mentions": 3227,
+      "ambiguous_mentions": 0,
+      "excluded_mentions": 15,
+      "distinct_resolved_concepts": 261
+    },
+    "WG3": {
+      "total_figures": 347,
+      "available_captions": 336,
+      "missing_captions": 11,
+      "figures_with_mentions": 322,
+      "captioned_figures_without_matches": 14,
+      "figures_with_resolved_concepts": 301,
+      "total_mentions": 2294,
+      "resolved_mentions": 2170,
+      "ambiguous_mentions": 0,
+      "excluded_mentions": 124,
+      "distinct_resolved_concepts": 189
+    }
+  },
+  "ambiguous_spellings_observed": {},
+  "quality_rules_applied": {
+    "citation_source_label": 139,
+    "co2_equivalent_qualifier": 35,
+    "co2_formula": 472
+  },
+  "top_concepts_by_figures": [
+    {
+      "term_id": "ipcc-ar6-8edcc26c0f6c7256",
+      "label": "Models",
+      "figures": 258
+    },
+    {
+      "term_id": "ipcc-ar6-10db699812d02cc5",
+      "label": "Climate",
+      "figures": 256
+    },
+    {
+      "term_id": "ipcc-ar6-ddf74783a6568c47",
+      "label": "Carbon dioxide",
+      "figures": 193
+    },
+    {
+      "term_id": "ipcc-ar6-90eae63487cae2df",
+      "label": "Land",
+      "figures": 162
+    },
+    {
+      "term_id": "ipcc-ar6-f28d567cf5453b5c",
+      "label": "Climate change",
+      "figures": 162
+    },
+    {
+      "term_id": "ipcc-ar6-901bf84e75c67b2b",
+      "label": "Ensemble",
+      "figures": 156
+    },
+    {
+      "term_id": "ipcc-ar6-c697d2981bf41656",
+      "label": "Region",
+      "figures": 146
+    },
+    {
+      "term_id": "ipcc-ar6-ee26f4137f88e240",
+      "label": "Scenario",
+      "figures": 145
+    },
+    {
+      "term_id": "ipcc-ar6-2fe1d615f7fb24b9",
+      "label": "Adaptation",
+      "figures": 130
+    },
+    {
+      "term_id": "ipcc-ar6-41a40ce559efc5c2",
+      "label": "Global warming",
+      "figures": 130
+    },
+    {
+      "term_id": "ipcc-ar6-47afad612b1f9cc8",
+      "label": "Ocean",
+      "figures": 123
+    },
+    {
+      "term_id": "ipcc-ar6-cabdb424db58baf4",
+      "label": "Impacts",
+      "figures": 121
+    },
+    {
+      "term_id": "ipcc-ar6-52a6efefa2bf8bb9",
+      "label": "Mitigation",
+      "figures": 102
+    },
+    {
+      "term_id": "ipcc-ar6-ff0139d07c592e9a",
+      "label": "Confidence",
+      "figures": 101
+    },
+    {
+      "term_id": "ipcc-ar6-9019f8058b99ac31",
+      "label": "Uncertainty",
+      "figures": 98
+    },
+    {
+      "term_id": "ipcc-ar6-2c6ef0f0d0e4cc6e",
+      "label": "Risk",
+      "figures": 95
+    },
+    {
+      "term_id": "ipcc-ar6-c685ae773698b702",
+      "label": "Coupled Model Intercomparison Project",
+      "figures": 82
+    },
+    {
+      "term_id": "ipcc-ar6-f31bb820c9ffe53d",
+      "label": "Percentile",
+      "figures": 81
+    },
+    {
+      "term_id": "ipcc-ar6-ee8250fb76e094b3",
+      "label": "Evidence",
+      "figures": 73
+    },
+    {
+      "term_id": "ipcc-ar6-0d210d3ca07c53a8",
+      "label": "Pre-industrial",
+      "figures": 69
+    }
+  ],
+  "notes": [
+    "Matches are literal glossary terms/aliases in captions, not verified visual content.",
+    "Ambiguous or excluded mentions have no selected concept and cannot create a figure_concepts link.",
+    "All original mention spans and candidates are retained for audit, including excluded citations.",
+    "CO2 formula disambiguation follows explicit IPCC notation; it is a heuristic requiring manual evaluation.",
+    "No precision or recall metric is claimed without an independently annotated gold sample.",
+    "Caption-missing figures are retained; their mentions are empty.",
+    "A figure-concept link records a caption mention, not a causal or ontology relation.",
+    "Concept extraction is vocabulary-limited; absence of a match is not absence of a topic."
+  ]
+}

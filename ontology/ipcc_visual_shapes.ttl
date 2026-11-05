@@ -1,0 +1,57 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix ipcc: <https://neelkumar01.github.io/IPCC-visual-knowledge-graph/ontology#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ipcc:FigureShape a sh:NodeShape ;
+    sh:property [ sh:datatype xsd:string ;
+            sh:in ( "available" "missing" ) ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path ipcc:captionStatus ],
+        [ sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:path dcterms:source ],
+        [ sh:datatype xsd:string ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path ipcc:sectionCode ],
+        [ sh:datatype xsd:string ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path dcterms:identifier ],
+        [ sh:datatype xsd:string ;
+            sh:maxCount 1 ;
+            sh:path ipcc:captionText ],
+        [ sh:class ipcc:ScientificConcept ;
+            sh:nodeKind sh:IRI ;
+            sh:path ipcc:mentionsConcept ],
+        [ sh:datatype xsd:string ;
+            sh:in ( "WG1" "WG2" "WG3" ) ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path ipcc:workingGroupCode ],
+        [ sh:datatype xsd:string ;
+            sh:maxCount 1 ;
+            sh:path ipcc:captionSHA256 ;
+            sh:pattern "^[0-9a-f]{64}$" ],
+        [ sh:datatype xsd:anyURI ;
+            sh:path ipcc:imageURL ] ;
+    sh:targetClass ipcc:Figure .
+
+ipcc:ScientificConceptShape a sh:NodeShape ;
+    sh:property [ sh:minCount 1 ;
+            sh:path skos:prefLabel ],
+        [ sh:datatype xsd:string ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path dcterms:identifier ],
+        [ sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:path dcterms:source ] ;
+    sh:targetClass ipcc:ScientificConcept .
+
