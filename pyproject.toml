@@ -1,68 +1,24 @@
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "semanticlens-vision"
-version = "0.1.0a1"
-description = "An extensible toolkit for visual document retrieval and evidence-grounded document AI"
+name = "semanticlens"
+version = "0.1.0"
+description = "A knowledge graph connecting IPCC AR6 figures to scientific terms identified in their captions."
 readme = "README.md"
-requires-python = ">=3.11"
-license = "Apache-2.0"
-license-files = ["LICENSE"]
-
-keywords = [
-    "visual-document-retrieval",
-    "multimodal-retrieval",
-    "document-ai",
-    "document-search",
-    "late-interaction",
-    "climate-science",
-]
-
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-]
+requires-python = ">=3.10"
 
 dependencies = [
-    "pydantic>=2.0,<3",
-    "pypdfium2>=4.30,<6",
-    "Pillow>=10,<13",
-    "sentence-transformers[image]>=6.0,<7",
-    "qdrant-client>=1.12,<2",
+    "rdflib>=7,<8",
+    "requests",
+    "beautifulsoup4",
 ]
 
 [project.optional-dependencies]
-
-# Qwen3-VL reference generation backend.
-# PyTorch is provided by sentence-transformers; install a GPU-compatible
-# PyTorch build for your hardware separately if the default is unsuitable.
-generation = [
-    "transformers[vision]>=5.0,<6",
-    "accelerate>=1.3,<2",
-]
-
-# Optional structured PDF parsing.
-# Not required for the main SemanticLens pipeline.
-mineru = [
-    "mineru==4.0.10",
-    "docvortex==0.5.7",
-    "pydantic>=2.12.5,<3",
-]
-
-# Development and package publishing tools.
-dev = [
-    "build>=1.2",
-    "pytest>=8.0",
-    "ruff>=0.11",
-    "twine>=6.0",
+pipeline = [
+    "pydantic>=2,<3",
+    "pyshacl",
 ]
 
 [project.urls]
@@ -70,11 +26,9 @@ Homepage = "https://github.com/semanticClimate/semanticlens"
 Repository = "https://github.com/semanticClimate/semanticlens"
 Issues = "https://github.com/semanticClimate/semanticlens/issues"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["semanticlens*"]
-namespaces = false
-
-[tool.ruff]
-target-version = "py311"
-line-length = 100
+[tool.setuptools]
+packages = [
+    "ipcc_kg",
+    "concepts",
+    "ontology",
+]
