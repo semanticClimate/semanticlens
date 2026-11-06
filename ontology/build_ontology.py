@@ -1,18 +1,8 @@
-"""Build the IPCC AR6 bipartite Figure--ScientificConcept knowledge graph.
+"""
+Builds and validates the IPCC visual knowledge graph
 
-The only instance-to-instance relationship is ``ipcc:mentionsConcept``. It
-means the caption contains an accepted glossary concept, not that the image
-visually depicts it or that the concepts are causally related.
-
-Caption-match and image records remain in SQLite. The RDF graph contains just
-Figure and ScientificConcept instances, with image URLs and source metadata as
-node properties. Input hashes, accepted links, graph integrity, and optional
-SHACL constraints are checked before outputs are published.
-
-Run from the repository root::
-
-    python -m ontology.build_ontology
-    python -m ontology.build_ontology --validate-shacl
+Combines the ontology schema with source-backed figure-concept relationships
+and exports the RDF graph with a quality report
 """
 
 from __future__ import annotations
@@ -35,12 +25,18 @@ from rdflib.namespace import DCTERMS, OWL, RDF, SH, SKOS
 
 from concepts.vocabulary import load_vocabulary
 from ontology.relationship import (
-    DEFAULT_CONCEPTS, DEFAULT_CORPUS, WORKING_GROUPS, build_relationship_graph,
+    DEFAULT_CONCEPTS,
+    DEFAULT_CORPUS,
+    WORKING_GROUPS,
+    build_relationship_graph,
 )
 from ontology.schema import (
-    IPCC, RESOURCE, build_ontology_schema, build_validation_shapes, resource_iri,
+    IPCC,
+    RESOURCE,
+    build_ontology_schema,
+    build_validation_shapes,
+    resource_iri,
 )
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_VOCABULARY = PROJECT_ROOT / "data" / "processed" / "ipcc_ar6_vocabulary.json"
@@ -51,7 +47,9 @@ BUILD_VERSION = "2.0"
 
 @dataclass(frozen=True, slots=True)
 class OntologyResult:
-    """Prepared RDF graph, independent SHACL shapes, and build quality report."""
+    """
+    Store the completed RDF graph, validation shapes, and quality report
+    """
 
     graph: Graph
     shapes: Graph
@@ -59,6 +57,9 @@ class OntologyResult:
 
 
 def _sha256(path: Path) -> str:
+    """
+    Calculate the SHA-256 checksum of a required file
+    """
     if not path.is_file():
         raise FileNotFoundError(f"Required input not found: {path}")
     digest = hashlib.sha256()
@@ -69,6 +70,9 @@ def _sha256(path: Path) -> str:
 
 
 def _source_hashes(corpus: Path, concepts: Path, vocabulary: Path) -> dict[str, str]:
+    """
+    Calculate checksums for the corpus, concept database, and vocabulary files
+    """
     return {
         "corpus_sha256": _sha256(corpus),
         "concepts_sha256": _sha256(concepts),
@@ -76,19 +80,31 @@ def _source_hashes(corpus: Path, concepts: Path, vocabulary: Path) -> dict[str, 
     }
 
 
-def _verify_concept_sources(concepts: Path, hashes: dict[str, str], vocabulary: Any) -> None:
-    """Ensure the concept database matches the exact corpus and vocabulary."""
-    with closing(sqlite3.connect(concepts.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+def _verify_concept_sources(
+    concepts: Path, hashes: dict[str, str], vocabulary: Any
+) -> None:
+    """
+    Check that the concept database matches the selected corpus and vocabulary
+
+    Verify database integrity, concept identities, and source checksums
+    """
+    with closing(
+        sqlite3.connect(concepts.resolve().as_uri() + "?mode=ro", uri=True)
+    ) as db:
         db.execute("PRAGMA query_only=ON")
         if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             raise ValueError("Concept SQLite integrity check failed")
         if db.execute("PRAGMA user_version").fetchone()[0] != 2:
-            raise ValueError("Step 3 concepts.db must use schema version 2; rebuild Step 3.5")
+            raise ValueError(
+                "Step 3 concepts.db must use schema version 2; rebuild Step 3.5"
+            )
         metadata = dict(db.execute("SELECT key, value FROM metadata"))
         observed = dict(db.execute("SELECT term_id, canonical_label FROM concepts"))
         expected = {term.term_id: term.label for term in vocabulary.terms}
         if observed != expected:
-            raise ValueError("Concept identities/labels disagree with the selected vocabulary")
+            raise ValueError(
+                "Concept identities/labels disagree with the selected vocabulary"
+            )
     for key in ("corpus_sha256", "vocabulary_sha256"):
         if metadata.get(key) != hashes[key]:
             raise ValueError(
@@ -98,12 +114,16 @@ def _verify_concept_sources(concepts: Path, hashes: dict[str, str], vocabulary: 
 
 
 def _verify_graph(
-    graph: Graph, expected: dict[str, int], corpus_path: Path, concepts_path: Path,
+    graph: Graph,
+    expected: dict[str, int],
+    corpus_path: Path,
+    concepts_path: Path,
 ) -> dict[str, Any]:
-    """Check exact Figure--Concept links and reject non-bipartite instances.
+    """
+    Check the RDF graph against the source databases and ontology structure
 
-    Caption spans, candidates and acceptance rules are validated by
-    ``build_relationship_graph`` against the SQLite data before this check.
+    Validate figures, concepts, properties, and relationships
+    and summarize results by working group
     """
     figures = set(graph.subjects(RDF.type, IPCC.Figure))
     concepts = set(graph.subjects(RDF.type, IPCC.ScientificConcept))
@@ -112,27 +132,37 @@ def _verify_graph(
     if figures & concepts:
         raise ValueError("A resource cannot be both a Figure and ScientificConcept")
 
-    # Only these two entity classes and one instance-to-instance predicate are
-    # allowed. Ontology classes/properties and provenance URLs are schema or
-    # metadata, not additional graph entities.
-    if (set(graph.subjects(RDF.type, OWL.Class)) != {IPCC.Figure, IPCC.ScientificConcept}
-            or set(graph.subjects(RDF.type, OWL.ObjectProperty)) != {IPCC.mentionsConcept}):
+    if set(graph.subjects(RDF.type, OWL.Class)) != {
+        IPCC.Figure,
+        IPCC.ScientificConcept,
+    } or set(graph.subjects(RDF.type, OWL.ObjectProperty)) != {IPCC.mentionsConcept}:
         raise ValueError("Ontology schema contains unwanted classes or relationships")
     entity_subjects = {
-        subject for subject in graph.subjects()
+        subject
+        for subject in graph.subjects()
         if isinstance(subject, URIRef) and str(subject).startswith(str(RESOURCE))
     }
     if entity_subjects != figures | concepts:
         raise ValueError("RDF contains unexpected instance resources")
 
     figure_properties = {
-        RDF.type, DCTERMS.identifier, DCTERMS.source, IPCC.workingGroupCode,
-        IPCC.sectionCode, IPCC.captionStatus, IPCC.captionSHA256,
-        IPCC.captionText, IPCC.imageURL, IPCC.mentionsConcept,
+        RDF.type,
+        DCTERMS.identifier,
+        DCTERMS.source,
+        IPCC.workingGroupCode,
+        IPCC.sectionCode,
+        IPCC.captionStatus,
+        IPCC.captionSHA256,
+        IPCC.captionText,
+        IPCC.imageURL,
+        IPCC.mentionsConcept,
     }
     concept_properties = {
-        RDF.type, DCTERMS.identifier, DCTERMS.source,
-        SKOS.prefLabel, SKOS.altLabel,
+        RDF.type,
+        DCTERMS.identifier,
+        DCTERMS.source,
+        SKOS.prefLabel,
+        SKOS.altLabel,
     }
     for subject in figures | concepts:
         properties = figure_properties if subject in figures else concept_properties
@@ -141,50 +171,79 @@ def _verify_graph(
             raise ValueError(f"Unexpected RDF type for {subject}")
         for predicate, obj in graph.predicate_objects(subject):
             if predicate not in properties:
-                raise ValueError(f"Unexpected instance relationship/property: {predicate}")
+                raise ValueError(
+                    f"Unexpected instance relationship/property: {predicate}"
+                )
             if isinstance(obj, URIRef) and predicate not in {
-                RDF.type, DCTERMS.source, IPCC.mentionsConcept,
+                RDF.type,
+                DCTERMS.source,
+                IPCC.mentionsConcept,
             }:
                 raise ValueError(f"Unexpected resource-valued attribute: {predicate}")
 
-    with closing(sqlite3.connect(corpus_path.resolve().as_uri() + "?mode=ro", uri=True)) as corpus:
+    with closing(
+        sqlite3.connect(corpus_path.resolve().as_uri() + "?mode=ro", uri=True)
+    ) as corpus:
         source_figures = {
-            row[0]: (row[1], row[2], row[3]) for row in corpus.execute(
+            row[0]: (row[1], row[2], row[3])
+            for row in corpus.execute(
                 "SELECT figure_id, working_group, section, source_url FROM figures"
             )
         }
         source_images: dict[str, set[str]] = {}
-        for fid, url in corpus.execute("SELECT figure_id, image_url FROM figure_images"):
+        for fid, url in corpus.execute(
+            "SELECT figure_id, image_url FROM figure_images"
+        ):
             source_images.setdefault(fid, set()).add(url)
 
     if figures != {resource_iri("figure", fid) for fid in source_figures}:
         raise ValueError("RDF figures do not match corpus.db")
     for fid, (wg, section, source_url) in source_figures.items():
         node = resource_iri("figure", fid)
-        if (set(map(str, graph.objects(node, DCTERMS.identifier))) != {fid}
-                or set(map(str, graph.objects(node, DCTERMS.source))) != {source_url}
-                or set(map(str, graph.objects(node, IPCC.workingGroupCode))) != {wg}
-                or set(map(str, graph.objects(node, IPCC.sectionCode))) != {section}
-                or set(map(str, graph.objects(node, IPCC.imageURL))) != source_images.get(fid, set())):
+        if (
+            set(map(str, graph.objects(node, DCTERMS.identifier))) != {fid}
+            or set(map(str, graph.objects(node, DCTERMS.source))) != {source_url}
+            or set(map(str, graph.objects(node, IPCC.workingGroupCode))) != {wg}
+            or set(map(str, graph.objects(node, IPCC.sectionCode))) != {section}
+            or set(map(str, graph.objects(node, IPCC.imageURL)))
+            != source_images.get(fid, set())
+        ):
             raise ValueError(f"Figure metadata/images disagree with corpus.db: {fid}")
 
-    with closing(sqlite3.connect(concepts_path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-        source_concepts = dict(db.execute("SELECT term_id, canonical_label FROM concepts"))
+    with closing(
+        sqlite3.connect(concepts_path.resolve().as_uri() + "?mode=ro", uri=True)
+    ) as db:
+        source_concepts = dict(
+            db.execute("SELECT term_id, canonical_label FROM concepts")
+        )
         source_pairs = {
             (resource_iri("figure", fid), resource_iri("concept", term_id))
-            for fid, term_id in db.execute("SELECT figure_id, term_id FROM figure_concepts")
+            for fid, term_id in db.execute(
+                "SELECT figure_id, term_id FROM figure_concepts"
+            )
         }
     if concepts != {resource_iri("concept", term_id) for term_id in source_concepts}:
         raise ValueError("RDF concepts do not match concepts.db")
     for term_id, label in source_concepts.items():
         node = resource_iri("concept", term_id)
-        if (set(map(str, graph.objects(node, DCTERMS.identifier))) != {term_id}
-                or set(map(str, graph.objects(node, SKOS.prefLabel))) != {label}):
-            raise ValueError(f"Concept label/identifier disagrees with concepts.db: {term_id}")
+        if set(map(str, graph.objects(node, DCTERMS.identifier))) != {term_id} or set(
+            map(str, graph.objects(node, SKOS.prefLabel))
+        ) != {label}:
+            raise ValueError(
+                f"Concept label/identifier disagrees with concepts.db: {term_id}"
+            )
     graph_pairs = set(graph.subject_objects(IPCC.mentionsConcept))
-    if (graph_pairs != source_pairs or len(graph_pairs) != expected["figure_concept_links"]
-            or any(fig not in figures or concept not in concepts for fig, concept in graph_pairs)):
-        raise ValueError("RDF Figure--Concept links disagree with accepted SQLite pairs")
+    if (
+        graph_pairs != source_pairs
+        or len(graph_pairs) != expected["figure_concept_links"]
+        or any(
+            fig not in figures or concept not in concepts
+            for fig, concept in graph_pairs
+        )
+    ):
+        raise ValueError(
+            "RDF Figure--Concept links disagree with accepted SQLite pairs"
+        )
 
     counts = Counter(wg for wg, _, _ in source_figures.values())
     pairs_by_wg: Counter[str] = Counter()
@@ -206,9 +265,11 @@ def _verify_graph(
 
 
 def _validate_shacl(graph: Graph, shapes: Graph) -> None:
-    """Run formal SHACL validation if requested; fail if unavailable."""
+    """
+    Validate the RDF graph against the SHACL shapes using pyshacl
+    """
     try:
-        from pyshacl import validate  # type: ignore[import-not-found]
+        from pyshacl import validate
     except ImportError as exc:
         raise RuntimeError(
             'Formal SHACL validation needs pyshacl. Install: pip install "pyshacl>=0.30,<1"'
@@ -222,7 +283,9 @@ def _validate_shacl(graph: Graph, shapes: Graph) -> None:
         meta_shacl=False,
     )
     if not conforms:
-        raise ValueError(f"RDF graph failed SHACL validation: {str(description)[:2000]}")
+        raise ValueError(
+            f"RDF graph failed SHACL validation: {str(description)[:2000]}"
+        )
 
 
 def build_knowledge_graph(
@@ -233,13 +296,20 @@ def build_knowledge_graph(
     include_captions: bool = False,
     validate_shacl: bool = False,
 ) -> OntologyResult:
-    """Build the verified bipartite graph, SHACL shapes and quality report."""
+    """
+    Build the complete IPCC visual knowledge graph from validated source files
+
+    Combine the ontology schema and relationships, check graph integrity,
+    and prepare a quality report
+    """
     corpus_path, concepts_path, vocabulary_path = map(
         Path, (corpus_path, concepts_path, vocabulary_path)
     )
     source_paths = (corpus_path, concepts_path, vocabulary_path)
     if len({p.resolve() for p in source_paths}) != 3:
-        raise ValueError("Corpus, concepts DB and vocabulary JSON must be distinct files")
+        raise ValueError(
+            "Corpus, concepts DB and vocabulary JSON must be distinct files"
+        )
     hashes = _source_hashes(*source_paths)
     vocabulary = load_vocabulary(vocabulary_path)
     _verify_concept_sources(concepts_path, hashes, vocabulary)
@@ -259,14 +329,20 @@ def build_knowledge_graph(
     if validate_shacl:
         _validate_shacl(graph, shapes)
     if _source_hashes(*source_paths) != hashes:
-        raise ValueError("An input was modified during ontology construction; rebuild from stable sources")
+        raise ValueError(
+            "An input was modified during ontology construction; rebuild from stable sources"
+        )
 
     report = {
         "report_type": "ontology_build_quality",
         "build_version": BUILD_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "inputs": {**hashes, "corpus_path": str(corpus_path),
-                   "concepts_path": str(concepts_path), "vocabulary_path": str(vocabulary_path)},
+        "inputs": {
+            **hashes,
+            "corpus_path": str(corpus_path),
+            "concepts_path": str(concepts_path),
+            "vocabulary_path": str(vocabulary_path),
+        },
         "summary": {
             **relationship.summary,
             "rdf_triples": len(graph),
@@ -302,7 +378,11 @@ def write_ontology(
     include_captions: bool = False,
     validate_shacl: bool = False,
 ) -> dict[str, Any]:
-    """Stage, round-trip check and publish RDF + report safely."""
+    """
+    Build and export the knowledge graph and its quality report
+
+    Verify the serialized RDF and check source files before publication
+    """
     corpus_path, concepts_path, vocabulary_path, output_path, report_path = map(
         Path, (corpus_path, concepts_path, vocabulary_path, output_path, report_path)
     )
@@ -310,26 +390,37 @@ def write_ontology(
     if len({p.resolve() for p in paths}) != len(paths):
         raise ValueError("All input and output paths must be different")
     result = build_knowledge_graph(
-        corpus_path, concepts_path, vocabulary_path,
-        include_captions=include_captions, validate_shacl=validate_shacl,
+        corpus_path,
+        concepts_path,
+        vocabulary_path,
+        include_captions=include_captions,
+        validate_shacl=validate_shacl,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".ontology-build-", dir=output_path.parent) as graph_tmp:
-        with tempfile.TemporaryDirectory(prefix=".ontology-report-", dir=report_path.parent) as report_tmp:
+    with tempfile.TemporaryDirectory(
+        prefix=".ontology-build-", dir=output_path.parent
+    ) as graph_tmp:
+        with tempfile.TemporaryDirectory(
+            prefix=".ontology-report-", dir=report_path.parent
+        ) as report_tmp:
             pending_graph = Path(graph_tmp) / "knowledge_graph.ttl"
             pending_report = Path(report_tmp) / "ontology_quality.json"
-            result.graph.serialize(destination=pending_graph, format="turtle", encoding="utf-8")
+            result.graph.serialize(
+                destination=pending_graph, format="turtle", encoding="utf-8"
+            )
             reloaded = Graph().parse(pending_graph, format="turtle")
             if len(reloaded) != len(result.graph) or set(reloaded) != set(result.graph):
-                raise RuntimeError("Serialized ontology graph failed exact RDF round-trip")
+                raise RuntimeError(
+                    "Serialized ontology graph failed exact RDF round-trip"
+                )
             pending_report.write_text(
                 json.dumps(result.report, indent=2, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
             if _source_hashes(corpus_path, concepts_path, vocabulary_path) != {
-                key: result.report["inputs"][key] for key in
-                ("corpus_sha256", "concepts_sha256", "vocabulary_sha256")
+                key: result.report["inputs"][key]
+                for key in ("corpus_sha256", "concepts_sha256", "vocabulary_sha256")
             }:
                 raise ValueError("An input changed before final publication")
             os.replace(pending_graph, output_path)
@@ -347,17 +438,24 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument(
-        "--include-captions", action="store_true",
+        "--include-captions",
+        action="store_true",
         help="Include full IPCC captions in RDF (check IPCC reuse permissions first).",
     )
     parser.add_argument(
-        "--validate-shacl", action="store_true",
+        "--validate-shacl",
+        action="store_true",
         help="Run formal SHACL validation using installed pyshacl (fails if unavailable).",
     )
     args = parser.parse_args()
     report = write_ontology(
-        args.corpus, args.concepts, args.vocabulary, args.output, args.report,
-        include_captions=args.include_captions, validate_shacl=args.validate_shacl,
+        args.corpus,
+        args.concepts,
+        args.vocabulary,
+        args.output,
+        args.report,
+        include_captions=args.include_captions,
+        validate_shacl=args.validate_shacl,
     )
     summary = report["summary"]
     print(
@@ -366,8 +464,10 @@ def main() -> None:
         f"{summary['figure_concept_links']} caption-supported links; "
         f"{summary['rdf_triples']} RDF triples."
     )
-    print(f"Integrity: {report['validation']['rdf_integrity']}; "
-          f"SHACL: {report['validation']['shacl']}")
+    print(
+        f"Integrity: {report['validation']['rdf_integrity']}; "
+        f"SHACL: {report['validation']['shacl']}"
+    )
     print(f"Turtle: {args.output}")
     print(f"Report: {args.report}")
 
