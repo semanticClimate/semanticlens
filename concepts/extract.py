@@ -1,18 +1,8 @@
 """
-Find scientific concept mentions in IPCC figure captions using glossary terms
+Extracts glossary concepts from IPCC figure captions
 
-- Match whole glossary terms or documented aliases in captions
-- Use deterministic text matching, not semantic or visual analysis
-- Reuse one ConceptExtractor to process multiple captions efficiently
-- Return no mentions for missing captions
-- Report match positions in the original caption (start inclusive, end exclusive)
-- Do not access the network, read/write corpus files, use NLP models, or update databases
-
-Usage:
-    from concepts.vocabulary import load_vocabulary
-    from concepts.extract import ConceptExtractor
-    extractor = ConceptExtractor(load_vocabulary())
-    mentions = extractor.extract("AR6-WG1-example", "AMOC influences climate.")
+Matches terms and aliases, handles text variations, and keeps
+their original positions in the caption
 """
 
 from __future__ import annotations
@@ -22,7 +12,6 @@ from typing import Literal
 import unicodedata
 
 from concepts.vocabulary import Vocabulary, normalize_term
-
 
 MatchKind = Literal["label", "alias", "mixed"]
 _DASHES = str.maketrans({"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"})
@@ -39,11 +28,7 @@ _SPACED_FORMULAS = {
 @dataclass(frozen=True, slots=True)
 class ConceptMention:
     """
-    An exact caption span and its candidate glossary term IDs
-
-    ``term_id`` is None when more than one glossary concept shares the matched
-    spelling; ``candidate_term_ids`` contains every possible concept in that
-    case. A unique lexical match is *not* a verified semantic interpretation.
+    Store a concept mention with its position, match details, and possible terms
     """
 
     figure_id: str
@@ -57,27 +42,34 @@ class ConceptMention:
 
     @property
     def is_ambiguous(self) -> bool:
+        """
+        Check whether the mention has no single matching concept
+        """
         return self.term_id is None
 
 
 @dataclass(slots=True)
 class _TrieNode:
+    """
+    Store a character and its connections in the term matching trie
+    """
+
     children: dict[str, _TrieNode] = field(default_factory=dict)
     terminal: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class _Spelling:
+    """
+    Store the spelling variants and concept details for a normalized term
+    """
+
     variants: tuple[tuple[str, str, MatchKind], ...]
 
 
 def _normalized_caption(text: str) -> tuple[str, list[int], list[int]]:
     """
-    Normalize for lookup while retaining offsets into the *original* text.
-
-    NFKC can expand characters (CO₂ -> CO2, ﬁ -> fi), and whitespace can
-    collapse; a plain normalized-string index is therefore not evidence.
-    Combining marks stay with their preceding character to support e + ◌́.
+    Normalize caption text while keeping track of original character positions
     """
     characters: list[str] = []
     starts: list[int] = []
@@ -85,7 +77,12 @@ def _normalized_caption(text: str) -> tuple[str, list[int], list[int]]:
     cluster_start = 0
 
     def append_cluster(start: int, end: int) -> None:
-        transformed = unicodedata.normalize("NFKC", text[start:end]).translate(_DASHES).casefold()
+        """
+        Normalize a group of characters and record their original positions
+        """
+        transformed = (
+            unicodedata.normalize("NFKC", text[start:end]).translate(_DASHES).casefold()
+        )
         for char in transformed:
             if char.isspace() and characters and characters[-1] == " ":
                 ends[-1] = end
@@ -104,22 +101,28 @@ def _normalized_caption(text: str) -> tuple[str, list[int], list[int]]:
 
 
 def _word_character(char: str) -> bool:
+    """
+    Check whether a character belongs to a word
+    """
     return char.isalnum() or char == "_" or unicodedata.category(char).startswith("M")
 
 
 def _valid_boundaries(text: str, start: int, end: int) -> bool:
     """
-    Reject matches embedded in words, IDs, longer numbers, or decimals
+    Check that a match does not start or end inside a word or number
     """
     if start and _word_character(text[start - 1]) and _word_character(text[start]):
         return False
-    if end < len(text) and _word_character(text[end - 1]) and _word_character(text[end]):
+    if (
+        end < len(text)
+        and _word_character(text[end - 1])
+        and _word_character(text[end])
+    ):
         return False
-    # '1.5°C' must not be found within '11.5°C' or '21.5°C'.
-    if text[start:start + 1].isdigit() and start >= 2:
+    if text[start : start + 1].isdigit() and start >= 2:
         if text[start - 1] == "." and text[start - 2].isdigit():
             return False
-    if end < len(text) - 1 and text[end - 1:end].isdigit():
+    if end < len(text) - 1 and text[end - 1 : end].isdigit():
         if text[end] == "." and text[end + 1].isdigit():
             return False
     return True
@@ -127,30 +130,21 @@ def _valid_boundaries(text: str, start: int, end: int) -> bool:
 
 def _requires_exact_case(spelling: str) -> bool:
     """
-    Keep very short, case-sensitive scientific symbols/acronyms precise.
-
-    E.g., do not treat ordinary lowercase 're' as Renewable Energy ('RE').
-    Longer headwords use the vocabulary's case-insensitive normalizer.
+    Check whether a short spelling needs an exact case match
     """
     return len(spelling.replace(" ", "")) <= 3 and any(c.isupper() for c in spelling)
 
 
 def _normalized_case(text: str) -> str:
     """
-    Typography-insensitive *but case preserving* comparison
+    Normalize Unicode characters, dashes, and spaces without changing case
     """
     return " ".join(unicodedata.normalize("NFKC", text).translate(_DASHES).split())
 
 
 class ConceptExtractor:
     """
-    Reusable leftmost longest glossary matcher with ambiguity protection.
-
-    All headwords and explicit aliases are eligible, with narrowly defined
-    chemical-formula typography variants, independent of source WG tags:
-    WG affiliation is provenance, not a restriction on where a concept can
-    occur. Nested shorter matches are suppressed to
-    avoid double-counting a phrase such as 'carbon dioxide removal'.
+    Find glossary terms and aliases in figure captions using a trie
     """
 
     def __init__(self, vocabulary: Vocabulary) -> None:
@@ -159,16 +153,20 @@ class ConceptExtractor:
         root = _TrieNode()
         entries: dict[str, list[tuple[str, str, MatchKind]]] = {}
         for term in vocabulary.terms:
-            for kind, spelling in [("label", term.label), *(("alias", a) for a in term.aliases)]:
+            for kind, spelling in [
+                ("label", term.label),
+                *(("alias", a) for a in term.aliases),
+            ]:
                 variants = (spelling, *_SPACED_FORMULAS.get(spelling, ()))
                 for variant in variants:
                     key = normalize_term(variant)
                     if key:
-                        entries.setdefault(key, []).append((variant, term.term_id, kind))
+                        entries.setdefault(key, []).append(
+                            (variant, term.term_id, kind)
+                        )
 
         spellings: dict[str, _Spelling] = {}
         for key, variants in entries.items():
-            # Duplicate spellings inside a term do not make it ambiguous.
             unique = sorted(set(variants), key=lambda item: (item[1], item[0], item[2]))
             spellings[key] = _Spelling(tuple(unique))
             node = root
@@ -182,13 +180,12 @@ class ConceptExtractor:
     def _candidate(
         self, key: str, original: str
     ) -> tuple[tuple[str, ...], MatchKind] | None:
-        """
-        Filter spelling variants before deciding whether a match is ambiguous
-        """
         entry = self._spellings[key]
         valid: list[tuple[str, MatchKind]] = []
         for spelling, term_id, kind in entry.variants:
-            if not _requires_exact_case(spelling) or _normalized_case(original) == _normalized_case(spelling):
+            if not _requires_exact_case(spelling) or _normalized_case(
+                original
+            ) == _normalized_case(spelling):
                 valid.append((term_id, kind))
         if not valid:
             return None
@@ -197,14 +194,9 @@ class ConceptExtractor:
         kind: MatchKind = next(iter(kinds)) if len(kinds) == 1 else "mixed"
         return ids, kind
 
-    def extract(self, figure_id: str, caption: str | None) -> tuple[ConceptMention, ...]:
-        """
-        Return ordered non-overlapping lexical mentions from one caption.
-
-        Repeated occurrences are preserved. An ambiguous spelling produces
-        exactly one mention with *all* candidate IDs and no selected term ID.
-        No pluralisation, paraphrase, fuzzy match, or hidden disambiguation.
-        """
+    def extract(
+        self, figure_id: str, caption: str | None
+    ) -> tuple[ConceptMention, ...]:
         if not isinstance(figure_id, str) or not figure_id.strip():
             raise ValueError("figure_id must be a nonempty string")
         if caption is None:
@@ -229,7 +221,7 @@ class ConceptExtractor:
                 key = node.terminal
                 if key is None or not _valid_boundaries(normalized, position, cursor):
                     continue
-                original = caption[starts[position]:ends[cursor - 1]]
+                original = caption[starts[position] : ends[cursor - 1]]
                 accepted = self._candidate(key, original)
                 if accepted is not None:
                     ids, kind = accepted

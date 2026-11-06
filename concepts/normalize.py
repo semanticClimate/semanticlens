@@ -1,28 +1,8 @@
 """
-Normalize IPCC caption mentions using source-backed glossary terms.
+Normalizes concept mentions found in IPCC figure captions
 
-- Map extracted term IDs to canonical glossary labels.
-- Preserve original evidence spans.
-- Keep ambiguous terms unresolved for later review.
-- Resolve ambiguity only using an adjacent parenthetical expansion
-  in the same caption, such as CO2 (carbon dioxide).
-- Do not use co-occurrence, working-group labels, or guessed synonyms.
-- Run after ConceptExtractor and before corpus/database building.
-- Do not access the network, filesystem, modify vocabulary, or write to databases.
-- Lexical matches do not confirm visual depiction or validated ontology relationships.
-
-Usage:
-    from concepts.vocabulary import load_vocabulary
-    from concepts.extract import ConceptExtractor
-
-    vocabulary = load_vocabulary()
-    extractor = ConceptExtractor(vocabulary)
-    normalizer = ConceptNormalizer(vocabulary)
-
-    caption = "CO2 (carbon dioxide) contributes to warming."
-    mentions = normalizer.normalize(
-        extractor.extract("figure-1", caption), caption
-    )
+Links mentions to vocabulary terms and uses explicit expansions
+to resolve ambiguous matches when possible
 """
 
 from __future__ import annotations
@@ -34,11 +14,8 @@ from typing import Iterable, Literal
 from concepts.extract import ConceptMention, MatchKind
 from concepts.vocabulary import Vocabulary, normalize_term
 
-
 Resolution = Literal["lexical", "explicit_expansion", "ambiguous"]
 
-# Require an immediately adjacent pair such as ``full name (ABBR)`` or
-# ``ABBR (full name)``; do not extrapolate from unrelated surrounding text.
 _OPEN_PAREN = re.compile(r"\s*\(\s*\Z")
 _CLOSE_PAREN = re.compile(r"\A\s*\)")
 
@@ -46,13 +23,7 @@ _CLOSE_PAREN = re.compile(r"\A\s*\)")
 @dataclass(frozen=True, slots=True)
 class NormalizedMention:
     """
-    A caption mention with an optional canonical glossary term identity.
-
-    ``term_id`` and ``canonical_label`` are None when unresolved. The original
-    caption text and [start, end) offsets are unchanged. ``candidate_term_ids``
-    always retains the complete set of lexical candidates, even if an explicit
-    in-caption expansion selects one. These IDs refer to *glossary entries*,
-    not newly inferred entities or cross-glossary synonym clusters.
+    Store a normalized concept mention with its matching term and resolution details
     """
 
     figure_id: str
@@ -68,15 +39,15 @@ class NormalizedMention:
 
     @property
     def is_ambiguous(self) -> bool:
+        """
+        Check whether the mention remains ambiguous
+        """
         return self.resolution == "ambiguous"
 
 
 class ConceptNormalizer:
     """
-    Normalize a caption's lexical matches against one frozen vocabulary.
-
-    A ``Vocabulary`` can be reused across many figures. The input must be a
-    single figure's extractor results, not mentions from multiple captions.
+    Normalize extracted concept mentions and resolve supported ambiguous matches
     """
 
     def __init__(self, vocabulary: Vocabulary) -> None:
@@ -88,11 +59,9 @@ class ConceptNormalizer:
         self, mentions: Iterable[ConceptMention], caption: str | None
     ) -> tuple[NormalizedMention, ...]:
         """
-        Return normalized mentions in caption order, without dropping any.
+        Validate extracted mentions and link them to matching vocabulary concepts
 
-        Fail closed on invalid evidence, unknown IDs, or inconsistent extractor
-        decisions rather than producing fabricated figure-concept associations.
-        A missing caption is valid only when there are no extracted mentions.
+        Resolve ambiguous mentions when a nearby explicit expansion supports a match
         """
         if caption is not None and not isinstance(caption, str):
             raise TypeError("caption must be a string or None")
@@ -136,11 +105,20 @@ class ConceptNormalizer:
         return tuple(result)
 
     def _validate_mentions(self, mentions: list[ConceptMention], caption: str) -> None:
+        """
+        Check that mentions have valid positions, matching source text, and known term IDs
+        """
         figure_id = mentions[0].figure_id
         previous_end = 0
         for mention in mentions:
-            if not isinstance(figure_id, str) or not figure_id.strip() or mention.figure_id != figure_id:
-                raise ValueError("All mentions must belong to the same nonempty figure_id")
+            if (
+                not isinstance(figure_id, str)
+                or not figure_id.strip()
+                or mention.figure_id != figure_id
+            ):
+                raise ValueError(
+                    "All mentions must belong to the same nonempty figure_id"
+                )
             if (
                 not isinstance(mention.start, int)
                 or isinstance(mention.start, bool)
@@ -150,10 +128,15 @@ class ConceptNormalizer:
                 or mention.start >= mention.end
                 or mention.end > len(caption)
             ):
-                raise ValueError("Mentions must have valid, non-overlapping caption spans")
-            if caption[mention.start:mention.end] != mention.matched_text:
+                raise ValueError(
+                    "Mentions must have valid, non-overlapping caption spans"
+                )
+            if caption[mention.start : mention.end] != mention.matched_text:
                 raise ValueError("Mention evidence does not match the original caption")
-            if not isinstance(mention.normalized_text, str) or not mention.normalized_text:
+            if (
+                not isinstance(mention.normalized_text, str)
+                or not mention.normalized_text
+            ):
                 raise ValueError("Mention is missing its normalized matching key")
             if mention.match_kind not in ("label", "alias", "mixed"):
                 raise ValueError("Unsupported match kind")
@@ -168,10 +151,14 @@ class ConceptNormalizer:
                 not isinstance(key, str) or self._vocabulary.get(key) is None
                 for key in candidates
             ):
-                raise ValueError("Mention references a term ID absent from the vocabulary")
+                raise ValueError(
+                    "Mention references a term ID absent from the vocabulary"
+                )
             if len(candidates) == 1:
                 if mention.term_id != candidates[0]:
-                    raise ValueError("Single-candidate mention must have its term_id set")
+                    raise ValueError(
+                        "Single-candidate mention must have its term_id set"
+                    )
             elif mention.term_id is not None:
                 raise ValueError("Ambiguous mention must not select a term_id")
             previous_end = mention.end
@@ -181,22 +168,18 @@ class ConceptNormalizer:
         left: ConceptMention, right: ConceptMention, caption: str
     ) -> bool:
         """
-        Only a directly adjacent, closed parenthesis is expansion evidence
+        Check whether two mentions form a term and abbreviation pair in parentheses
         """
         return bool(
-            _OPEN_PAREN.fullmatch(caption[left.end:right.start])
-            and _CLOSE_PAREN.match(caption[right.end:])
+            _OPEN_PAREN.fullmatch(caption[left.end : right.start])
+            and _CLOSE_PAREN.match(caption[right.end :])
         )
 
     def _resolve_expansion(
         self, mentions: list[ConceptMention], position: int, caption: str
     ) -> str | None:
         """
-        Choose a candidate only when the caption explicitly expands it.
-
-        The neighboring match must be an unambiguous *full glossary headword*,
-        not another short acronym or alias. This supports ``CO2 (carbon dioxide)``
-        while refusing guesses based on WG membership or mere co-occurrence.
+        Resolve an ambiguous mention using a nearby matching term in parentheses
         """
         ambiguous = mentions[position]
         candidates = set(ambiguous.candidate_term_ids)
@@ -213,7 +196,8 @@ class ConceptNormalizer:
                 headword is None
                 or len(headword.label) < 5
                 or neighbor.match_kind not in ("label", "mixed")
-                or normalize_term(neighbor.matched_text) != normalize_term(headword.label)
+                or normalize_term(neighbor.matched_text)
+                != normalize_term(headword.label)
             ):
                 continue
             left, right = sorted((ambiguous, neighbor), key=lambda m: m.start)

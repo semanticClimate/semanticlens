@@ -1,16 +1,8 @@
-"""Build an evidence-backed IPCC AR6 figure-to-glossary-concept index.
+"""
+Builds a concept database from IPCC figure captions and glossary terms
 
-Reads the *processed* Step 2 corpus and Step 3 vocabulary, then runs the
-existing lexical extractor and conservative normalizer on every available
-caption. Creates a separate, queryable SQLite database and quality report.
-Nothing here infers visual content, scientific causality, or ontology edges.
-
-Run from the repository root (or any working directory):
-    python -m concepts.build_concepts
-
-Inputs are never modified. Both outputs are constructed and verified in
-temporary files before being individually replaced; replacing two files is
-not a single atomic transaction. No downloads or additional dependencies.
+Extracts and checks concept mentions, stores their links to figures
+and creates a report on extraction quality and source information
 """
 
 from __future__ import annotations
@@ -33,7 +25,6 @@ from concepts.normalize import ConceptNormalizer
 from concepts.quality import MentionQuality
 from concepts.vocabulary import Vocabulary, load_vocabulary
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CORPUS = PROJECT_ROOT / "data" / "processed" / "corpus.db"
 DEFAULT_VOCABULARY = PROJECT_ROOT / "data" / "processed" / "ipcc_ar6_vocabulary.json"
@@ -46,6 +37,10 @@ METHOD = "glossary_lexical_quality_v2"
 
 @dataclass(frozen=True, slots=True)
 class _Figure:
+    """
+    Store the figure details needed for concept extraction.
+    """
+
     figure_id: str
     working_group: str
     source_url: str
@@ -120,7 +115,9 @@ WHERE m.term_id IS NOT NULL;
 
 
 def _sha256(path: Path) -> str:
-    """Fingerprint source bytes for reproducibility and stale-output checks."""
+    """
+    Calculate the SHA-256 checksum of a file to track its contents
+    """
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -129,7 +126,9 @@ def _sha256(path: Path) -> str:
 
 
 def _read_vocabulary(path: Path) -> tuple[Vocabulary, dict[str, Any], str]:
-    """Use the existing vocabulary loader; retain its source provenance."""
+    """
+    Load the IPCC vocabulary and check its source information and checksum.
+    """
     if not path.is_file():
         raise FileNotFoundError(f"Vocabulary JSON not found: {path}")
     checksum_before = _sha256(path)
@@ -137,7 +136,10 @@ def _read_vocabulary(path: Path) -> tuple[Vocabulary, dict[str, Any], str]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if _sha256(path) != checksum_before:
         raise ValueError("Vocabulary changed while the build was reading it")
-    if not isinstance(payload, dict) or payload.get("vocabulary_id") != "ipcc-ar6-glossary":
+    if (
+        not isinstance(payload, dict)
+        or payload.get("vocabulary_id") != "ipcc-ar6-glossary"
+    ):
         raise ValueError("Expected the IPCC AR6 glossary vocabulary JSON")
     provenance = payload.get("provenance")
     if not isinstance(provenance, dict) or not all(
@@ -151,7 +153,9 @@ def _read_vocabulary(path: Path) -> tuple[Vocabulary, dict[str, Any], str]:
 
 
 def _read_figures(path: Path) -> tuple[_Figure, ...]:
-    """Read the validated Step 2 figures in a read-only SQLite connection."""
+    """
+    Read figures from the corpus database and check their source details.
+    """
     if not path.is_file():
         raise FileNotFoundError(f"Processed figure corpus not found: {path}")
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
@@ -160,14 +164,18 @@ def _read_figures(path: Path) -> tuple[_Figure, ...]:
             raise ValueError("Source figure corpus failed SQLite quick_check")
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version != 1:
-            raise ValueError(f"Expected Step 2 corpus database schema 1, found {version}")
+            raise ValueError(
+                f"Expected Step 2 corpus database schema 1, found {version}"
+            )
         try:
             rows = db.execute(
                 "SELECT figure_id, working_group, source_url, caption, caption_status "
                 "FROM figures ORDER BY figure_id"
             ).fetchall()
         except sqlite3.OperationalError as exc:
-            raise ValueError("Source corpus is missing the Step 2 figures schema") from exc
+            raise ValueError(
+                "Source corpus is missing the Step 2 figures schema"
+            ) from exc
 
     if not rows:
         raise ValueError("Source figure corpus contains no figures")
@@ -181,7 +189,9 @@ def _read_figures(path: Path) -> tuple[_Figure, ...]:
             f"https://www.ipcc.ch/report/ar6/{wg.lower()}/figures/"
         ):
             raise ValueError(f"Invalid source provenance for {figure_id}")
-        expected = "available" if isinstance(caption, str) and caption.strip() else "missing"
+        expected = (
+            "available" if isinstance(caption, str) and caption.strip() else "missing"
+        )
         if status != expected:
             raise ValueError(f"Inconsistent caption status for {figure_id}")
         figures.append(_Figure(figure_id, wg, source_url, caption, status))
@@ -194,7 +204,10 @@ def _populate_database(
     figures: tuple[_Figure, ...],
     metadata: dict[str, str],
 ) -> dict[str, Any]:
-    """Create every source-backed concept, mention, and candidate association."""
+    """
+    Extract and assess concept mentions, save them to SQLite
+    and return a summary of the results
+    """
     extractor = ConceptExtractor(vocabulary)
     normalizer = ConceptNormalizer(vocabulary)
     quality = MentionQuality(vocabulary)
@@ -203,7 +216,7 @@ def _populate_database(
     by_wg: dict[str, Counter[str]] = {wg: Counter() for wg in WORKING_GROUPS}
     wg_concepts: dict[str, set[str]] = {wg: set() for wg in WORKING_GROUPS}
     ambiguity: Counter[str] = Counter()
-    concept_frequency: Counter[str] = Counter()  # unique figure-concept pairs
+    concept_frequency: Counter[str] = Counter()
     used_ids: set[str] = set()
 
     with closing(sqlite3.connect(path)) as db:
@@ -245,17 +258,28 @@ def _populate_database(
                     summary["available_captions"] += 1
                     by_wg[wg]["available_captions"] += 1
 
-                caption_hash = (hashlib.sha256(figure.caption.encode("utf-8")).hexdigest()
-                                if figure.caption_status == "available" else None)
+                caption_hash = (
+                    hashlib.sha256(figure.caption.encode("utf-8")).hexdigest()
+                    if figure.caption_status == "available"
+                    else None
+                )
                 db.execute(
                     "INSERT INTO figures VALUES (?,?,?,?,?)",
-                    (figure.figure_id, wg, figure.source_url, figure.caption_status, caption_hash),
+                    (
+                        figure.figure_id,
+                        wg,
+                        figure.source_url,
+                        figure.caption_status,
+                        caption_hash,
+                    ),
                 )
 
                 mentions = quality.assess(
                     normalizer.normalize(
-                        extractor.extract(figure.figure_id, figure.caption), figure.caption
-                    ), figure.caption
+                        extractor.extract(figure.figure_id, figure.caption),
+                        figure.caption,
+                    ),
+                    figure.caption,
                 )
                 if mentions:
                     summary["figures_with_mentions"] += 1
@@ -290,13 +314,24 @@ def _populate_database(
                         "INSERT INTO mentions(figure_id,start_offset,end_offset,"
                         "matched_text,normalized_text,match_kind,resolution,quality_rule,term_id) "
                         "VALUES (?,?,?,?,?,?,?,?,?)",
-                        (mention.figure_id, mention.start, mention.end,
-                         mention.matched_text, mention.normalized_text,
-                         mention.match_kind, assessed.resolution, assessed.rule, assessed.term_id),
+                        (
+                            mention.figure_id,
+                            mention.start,
+                            mention.end,
+                            mention.matched_text,
+                            mention.normalized_text,
+                            mention.match_kind,
+                            assessed.resolution,
+                            assessed.rule,
+                            assessed.term_id,
+                        ),
                     )
                     db.executemany(
                         "INSERT INTO mention_candidates(mention_id,term_id) VALUES (?,?)",
-                        ((row.lastrowid, term_id) for term_id in mention.candidate_term_ids),
+                        (
+                            (row.lastrowid, term_id)
+                            for term_id in mention.candidate_term_ids
+                        ),
                     )
 
                 if figure_resolved:
@@ -314,38 +349,69 @@ def _populate_database(
             raise RuntimeError("Built concept database failed SQLite integrity_check")
         if db.execute("SELECT COUNT(*) FROM figures").fetchone()[0] != len(figures):
             raise RuntimeError("Not all figures were saved")
-        if db.execute("SELECT COUNT(*) FROM concepts").fetchone()[0] != len(vocabulary.terms):
+        if db.execute("SELECT COUNT(*) FROM concepts").fetchone()[0] != len(
+            vocabulary.terms
+        ):
             raise RuntimeError("Not all vocabulary concepts were saved")
-        if db.execute("SELECT COUNT(*) FROM mentions").fetchone()[0] != summary["total_mentions"]:
+        if (
+            db.execute("SELECT COUNT(*) FROM mentions").fetchone()[0]
+            != summary["total_mentions"]
+        ):
             raise RuntimeError("Mention count mismatch")
-        if db.execute("SELECT COUNT(*) FROM figure_concepts").fetchone()[0] != summary["figure_concept_links"]:
+        if (
+            db.execute("SELECT COUNT(*) FROM figure_concepts").fetchone()[0]
+            != summary["figure_concept_links"]
+        ):
             raise RuntimeError("Figure-to-concept link count mismatch")
 
     summary["vocabulary_terms"] = len(vocabulary.terms)
     summary["distinct_resolved_concepts"] = len(used_ids)
     counts = (
-        "total_figures", "available_captions", "missing_captions", "figures_with_mentions",
-        "captioned_figures_without_matches", "figures_with_resolved_concepts",
-        "total_mentions", "resolved_mentions", "ambiguous_mentions", "excluded_mentions",
-        "formula_resolved_mentions", "explicit_expansion_mentions", "figure_concept_links", "vocabulary_terms",
+        "total_figures",
+        "available_captions",
+        "missing_captions",
+        "figures_with_mentions",
+        "captioned_figures_without_matches",
+        "figures_with_resolved_concepts",
+        "total_mentions",
+        "resolved_mentions",
+        "ambiguous_mentions",
+        "excluded_mentions",
+        "formula_resolved_mentions",
+        "explicit_expansion_mentions",
+        "figure_concept_links",
+        "vocabulary_terms",
         "distinct_resolved_concepts",
     )
     wg_counts = (
-        "total_figures", "available_captions", "missing_captions", "figures_with_mentions",
-        "captioned_figures_without_matches", "figures_with_resolved_concepts",
-        "total_mentions", "resolved_mentions", "ambiguous_mentions", "excluded_mentions",
+        "total_figures",
+        "available_captions",
+        "missing_captions",
+        "figures_with_mentions",
+        "captioned_figures_without_matches",
+        "figures_with_resolved_concepts",
+        "total_mentions",
+        "resolved_mentions",
+        "ambiguous_mentions",
+        "excluded_mentions",
     )
     return {
         "summary": {key: summary[key] for key in counts},
         "by_working_group": {
-            wg: {**{key: by_wg[wg][key] for key in wg_counts},
-                 "distinct_resolved_concepts": len(wg_concepts[wg])}
+            wg: {
+                **{key: by_wg[wg][key] for key in wg_counts},
+                "distinct_resolved_concepts": len(wg_concepts[wg]),
+            }
             for wg in WORKING_GROUPS
         },
         "ambiguous_spellings_observed": dict(sorted(ambiguity.items())),
         "quality_rules_applied": dict(sorted(rule_counts.items())),
         "top_concepts_by_figures": [
-            {"term_id": term_id, "label": vocabulary.get(term_id).label, "figures": count}
+            {
+                "term_id": term_id,
+                "label": vocabulary.get(term_id).label,
+                "figures": count,
+            }
             for term_id, count in sorted(
                 concept_frequency.items(), key=lambda item: (-item[1], item[0])
             )[:20]
@@ -359,15 +425,15 @@ def build_concepts(
     database_path: Path = DEFAULT_DATABASE,
     report_path: Path = DEFAULT_REPORT,
 ) -> dict[str, Any]:
-    """Build a reproducible SQLite concept index and a separate quality report.
-
-    An invalid input or extraction error leaves existing output files intact.
-    The source corpus and glossary JSON stay unchanged. Run again to rebuild
-    from scratch; there are no stale/duplicate associations from prior runs.
+    """
+    Build the concept database from the corpus and vocabulary
+    then save the database and extraction quality report
     """
     corpus_path, vocabulary_path = Path(corpus_path), Path(vocabulary_path)
     database_path, report_path = Path(database_path), Path(report_path)
-    paths = [p.resolve() for p in (corpus_path, vocabulary_path, database_path, report_path)]
+    paths = [
+        p.resolve() for p in (corpus_path, vocabulary_path, database_path, report_path)
+    ]
     if len(set(paths)) != len(paths):
         raise ValueError("All input and output paths must be distinct")
 
@@ -387,13 +453,19 @@ def build_concepts(
 
     database_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".concept-build-", dir=database_path.parent) as db_tmp:
-        with tempfile.TemporaryDirectory(prefix=".concept-report-", dir=report_path.parent) as report_tmp:
+    with tempfile.TemporaryDirectory(
+        prefix=".concept-build-", dir=database_path.parent
+    ) as db_tmp:
+        with tempfile.TemporaryDirectory(
+            prefix=".concept-report-", dir=report_path.parent
+        ) as report_tmp:
             staged_db = Path(db_tmp) / "concepts.db"
             staged_report = Path(report_tmp) / "concept_quality.json"
             counts = _populate_database(staged_db, vocabulary, figures, metadata)
-            # Detect a source changed during extraction; never publish stale links.
-            if _sha256(corpus_path) != corpus_sha or _sha256(vocabulary_path) != vocabulary_sha:
+            if (
+                _sha256(corpus_path) != corpus_sha
+                or _sha256(vocabulary_path) != vocabulary_sha
+            ):
                 raise ValueError("Input corpus or vocabulary changed during the build")
             report = {
                 "report_type": "concept_extraction_quality",
@@ -418,7 +490,8 @@ def build_concepts(
                 ],
             }
             staged_report.write_text(
-                json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+                json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
             )
             os.replace(staged_db, database_path)
             os.replace(staged_report, report_path)
