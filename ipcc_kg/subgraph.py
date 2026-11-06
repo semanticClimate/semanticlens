@@ -1,10 +1,8 @@
-"""Focused, source-faithful Figure--ScientificConcept RDF subgraphs.
+"""
+Builds and explores smaller RDF graphs from the IPCC knowledge graph
 
-Only accepted ``ipcc:mentionsConcept`` edges are traversed. The initial RDF
-subset contains at most ``limit`` figures and ``related_concepts`` concepts;
-other real source-graph neighbors can be revealed on demand. This module does
-not create caption-evidence or image-reference nodes: source evidence remains
-in concepts.db and figure images are literal properties / corpus.db records.
+Selects relevant figures and concepts, expands their connections,
+and supports visualization and export
 """
 
 from __future__ import annotations
@@ -29,18 +27,23 @@ if TYPE_CHECKING:
 _MAX_FIGURES = 100
 _MAX_EXPANSION_DEPTH = 3
 
-# There is exactly one instance-to-instance RDF relationship in this ontology.
 _RELATIONS = frozenset({IPCC.mentionsConcept})
 
-# Source-backed literals stay with their Figure or ScientificConcept; they are
-# not separate nodes. Do not copy full captions into an exported subgraph.
 _METADATA = {
     IPCC.Figure: (
-        DCTERMS.identifier, DCTERMS.source, IPCC.workingGroupCode,
-        IPCC.sectionCode, IPCC.captionStatus, IPCC.captionSHA256, IPCC.imageURL,
+        DCTERMS.identifier,
+        DCTERMS.source,
+        IPCC.workingGroupCode,
+        IPCC.sectionCode,
+        IPCC.captionStatus,
+        IPCC.captionSHA256,
+        IPCC.imageURL,
     ),
     IPCC.ScientificConcept: (
-        DCTERMS.identifier, DCTERMS.source, SKOS.prefLabel, SKOS.altLabel,
+        DCTERMS.identifier,
+        DCTERMS.source,
+        SKOS.prefLabel,
+        SKOS.altLabel,
     ),
 }
 
@@ -49,7 +52,9 @@ _CLASS_METADATA = (RDF.type, RDFS.label, RDFS.comment, RDFS.subClassOf)
 
 
 def _instance_type(source: Graph, node: URIRef) -> URIRef | None:
-    """Identify only the two allowed RDF instance classes."""
+    """
+    Find whether an RDF node represents a figure or scientific concept
+    """
     for kind in _METADATA:
         if (node, RDF.type, kind) in source:
             return kind
@@ -57,6 +62,9 @@ def _instance_type(source: Graph, node: URIRef) -> URIRef | None:
 
 
 def _node_iri(node: URIRef | str) -> URIRef:
+    """
+    Validate a resource IRI and return it as an RDF URIRef
+    """
     if isinstance(node, URIRef):
         value = str(node)
     elif isinstance(node, str):
@@ -69,6 +77,9 @@ def _node_iri(node: URIRef | str) -> URIRef:
 
 
 def _predicate_set(predicates: Iterable[URIRef] | None) -> frozenset[URIRef]:
+    """
+    Validate and return the allowed relationship predicates
+    """
     if predicates is None:
         return _RELATIONS
     selected = frozenset(predicates)
@@ -78,9 +89,13 @@ def _predicate_set(predicates: Iterable[URIRef] | None) -> frozenset[URIRef]:
 
 
 def _edges_for(
-    source: Graph, node: URIRef, predicates: frozenset[URIRef],
+    source: Graph,
+    node: URIRef,
+    predicates: frozenset[URIRef],
 ) -> tuple[tuple[URIRef, URIRef, URIRef], ...]:
-    """Return actual directed source triples incident on a figure or concept."""
+    """
+    Find supported figure-concept relationships connected to an RDF node
+    """
     if IPCC.mentionsConcept not in predicates:
         return ()
     kind = _instance_type(source, node)
@@ -105,12 +120,8 @@ def _edges_for(
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeSubgraph:
-    """Initial Figure/Concept selection plus access to real source neighbors.
-
-    ``figures``, ``concepts`` and ``graph`` represent the initially requested
-    view (or an explicit Python ``expand`` result). ``_source`` retains the
-    complete, unchanged RDF graph for expansion; ``_kg`` provides the existing
-    read-only SQLite-backed figure/caption evidence to the HTML renderer.
+    """
+    Store a focused RDF graph with its search results and related concepts
     """
 
     query: str
@@ -120,24 +131,40 @@ class KnowledgeSubgraph:
     concepts: tuple[ConceptSummary, ...]
     graph: Graph
     _source: Graph | None = field(default=None, repr=False, compare=False, kw_only=True)
-    _wg_filter: str | None = field(default=None, repr=False, compare=False, kw_only=True)
+    _wg_filter: str | None = field(
+        default=None, repr=False, compare=False, kw_only=True
+    )
     _kg: IPCCGraph | None = field(default=None, repr=False, compare=False, kw_only=True)
 
     @property
     def figure_ids(self) -> tuple[str, ...]:
+        """
+        Return the IDs of figures in the search results
+        """
         return tuple(hit.figure_id for hit in self.figures)
 
     @property
     def concept_ids(self) -> tuple[str, ...]:
+        """
+        Return the IDs of selected concepts
+        """
         return tuple(concept.term_id for concept in self.concepts)
 
     def __len__(self) -> int:
+        """
+        Return the number of figures in the search results
+        """
         return len(self.figures)
 
     def neighbors(
-        self, node: URIRef | str, *, predicates: Iterable[URIRef] | None = None,
+        self,
+        node: URIRef | str,
+        *,
+        predicates: Iterable[URIRef] | None = None,
     ) -> tuple[tuple[URIRef, URIRef, URIRef], ...]:
-        """List all real incident Figure--Concept links, even if not yet shown."""
+        """
+        Find supported relationships connected to a node in the source graph
+        """
         if self._source is None:
             raise RuntimeError("Source graph unavailable for neighborhood exploration")
         uri = _node_iri(node)
@@ -148,15 +175,17 @@ class KnowledgeSubgraph:
         return _edges_for(self._source, uri, _predicate_set(predicates))
 
     def expand(
-        self, node: URIRef | str, *, depth: int = 1, max_nodes: int | None = None,
+        self,
+        node: URIRef | str,
+        *,
+        depth: int = 1,
+        max_nodes: int | None = None,
         predicates: Iterable[URIRef] | None = None,
     ) -> KnowledgeSubgraph:
-        """Return a new view with real linked nodes revealed in both directions.
+        """
+        Expand the subgraph by following nearby figure-concept relationships
 
-        One hop reveals *all* currently missing direct neighbors by default.
-        Set ``max_nodes`` to a positive integer to bound *new* resources.
-        A ``wg`` filter, if specified by the original search, continues to
-        apply to newly revealed figures. Search ranking/results remain intact.
+        Limit the expansion by depth and number of additional nodes
         """
         if type(depth) is not int or not 1 <= depth <= _MAX_EXPANSION_DEPTH:
             raise ValueError(f"depth must be between 1 and {_MAX_EXPANSION_DEPTH}")
@@ -165,8 +194,8 @@ class KnowledgeSubgraph:
 
         uri = _node_iri(node)
         relations = _predicate_set(predicates)
-        self.neighbors(uri, predicates=relations)  # Verify selected node.
-        if self._source is None:  # Defensive: checked by neighbors above.
+        self.neighbors(uri, predicates=relations)
+        if self._source is None:
             raise RuntimeError("Source graph unavailable for neighborhood exploration")
 
         subset = _RDFSubset(self._source, initial=self.graph)
@@ -176,10 +205,18 @@ class KnowledgeSubgraph:
         for _ in range(depth):
             following: set[URIRef] = set()
             for center in frontier:
-                for figure, predicate, concept in _edges_for(self._source, center, relations):
-                    newly_visible = tuple(n for n in (figure, concept) if n not in present)
-                    if (self._wg_filter and figure in newly_visible
-                            and str(self._source.value(figure, IPCC.workingGroupCode)) != self._wg_filter):
+                for figure, predicate, concept in _edges_for(
+                    self._source, center, relations
+                ):
+                    newly_visible = tuple(
+                        n for n in (figure, concept) if n not in present
+                    )
+                    if (
+                        self._wg_filter
+                        and figure in newly_visible
+                        and str(self._source.value(figure, IPCC.workingGroupCode))
+                        != self._wg_filter
+                    ):
                         continue
                     if max_nodes is not None and added + len(newly_visible) > max_nodes:
                         continue
@@ -197,19 +234,29 @@ class KnowledgeSubgraph:
         return replace(self, graph=subset.graph)
 
     def show(self, *, height: int = 650) -> None:
-        """Display this RDF view in Colab or Jupyter."""
+        """
+        Display an interactive visualization of the subgraph
+        """
         from .visualize import show_subgraph
+
         show_subgraph(self, height=height)
 
     def save(self, path: str | Path) -> Path:
-        """Export HTML or RDF (including JSON-LD) without changing the source."""
+        """
+        Save the subgraph as an RDF file or HTML visualization
+        """
         output = Path(path).expanduser()
         if output.suffix.lower() in (".html", ".htm"):
             from .visualize import save_html
+
             return save_html(self, output)
         rdf_format = {
-            ".ttl": "turtle", ".nt": "nt", ".rdf": "xml",
-            ".xml": "xml", ".jsonld": "json-ld", ".json": "json-ld",
+            ".ttl": "turtle",
+            ".nt": "nt",
+            ".rdf": "xml",
+            ".xml": "xml",
+            ".jsonld": "json-ld",
+            ".json": "json-ld",
         }.get(output.suffix.lower())
         if rdf_format is None:
             raise ValueError(
@@ -217,11 +264,15 @@ class KnowledgeSubgraph:
             )
         output.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
-            dir=output.parent, prefix=f".{output.name}.", delete=False,
+            dir=output.parent,
+            prefix=f".{output.name}.",
+            delete=False,
         ) as stage:
             temporary = Path(stage.name)
         try:
-            self.graph.serialize(destination=temporary, format=rdf_format, encoding="utf-8")
+            self.graph.serialize(
+                destination=temporary, format=rdf_format, encoding="utf-8"
+            )
             os.replace(temporary, output)
         finally:
             temporary.unlink(missing_ok=True)
@@ -229,21 +280,33 @@ class KnowledgeSubgraph:
 
 
 def _has_resource(graph: Graph, node: URIRef) -> bool:
-    return next(graph.triples((node, None, None)), None) is not None or next(
-        graph.triples((None, None, node)), None
-    ) is not None
+    """
+    Check whether an RDF node appears in the graph
+    """
+    return (
+        next(graph.triples((node, None, None)), None) is not None
+        or next(graph.triples((None, None, node)), None) is not None
+    )
 
 
 def _instance_resources(source: Graph, graph: Graph) -> set[URIRef]:
+    """
+    Find figure and concept resources present in an RDF graph
+    """
     candidates = set(graph.subjects()) | {
         obj for obj in graph.objects() if isinstance(obj, URIRef)
     }
-    return {node for node in candidates if isinstance(node, URIRef)
-            and _instance_type(source, node) is not None}
+    return {
+        node
+        for node in candidates
+        if isinstance(node, URIRef) and _instance_type(source, node) is not None
+    }
 
 
 class _RDFSubset:
-    """Copy real source triples and safe, minimal instance descriptions."""
+    """
+    Build a smaller RDF graph using selected resources and relationships
+    """
 
     def __init__(self, source: Graph, *, initial: Graph | None = None) -> None:
         self.source = source
@@ -254,6 +317,9 @@ class _RDFSubset:
             self.graph += initial
 
     def describe(self, uri: URIRef) -> None:
+        """
+        Add a figure or concept and its metadata to the subgraph
+        """
         kind = _instance_type(self.source, uri)
         if kind is None:
             raise ValueError(f"Not a Figure or ScientificConcept instance: {uri}")
@@ -263,29 +329,46 @@ class _RDFSubset:
                 self.graph.add((uri, predicate, value))
 
     def connect(self, subject: URIRef, predicate: URIRef, obj: URIRef) -> None:
+        """
+        Add a validated figure-concept relationship and describe both resources
+        """
         if (subject, predicate, obj) not in self.source:
             raise ValueError(f"Relationship absent from the source RDF: {predicate}")
         if predicate != IPCC.mentionsConcept:
             raise ValueError(f"Unsupported RDF relationship: {predicate}")
-        if (_instance_type(self.source, subject) != IPCC.Figure
-                or _instance_type(self.source, obj) != IPCC.ScientificConcept):
-            raise ValueError("Only Figure--mentionsConcept-->ScientificConcept edges allowed")
+        if (
+            _instance_type(self.source, subject) != IPCC.Figure
+            or _instance_type(self.source, obj) != IPCC.ScientificConcept
+        ):
+            raise ValueError(
+                "Only Figure--mentionsConcept-->ScientificConcept edges allowed"
+            )
         self.graph.add((subject, predicate, obj))
         self.describe(subject)
         self.describe(obj)
 
     def initial_figures(self, figure_ids: tuple[str, ...]) -> None:
+        """
+        Add the selected figures and their metadata to the subgraph
+        """
         for figure_id in figure_ids:
             self.describe(resource_iri("figure", figure_id))
 
     def initial_concepts(self, concept_ids: tuple[str, ...]) -> None:
+        """
+        Add the selected concepts and their metadata to the subgraph
+        """
         for concept_id in concept_ids:
             self.describe(resource_iri("concept", concept_id))
 
     def connect_selected(
-        self, figure_ids: tuple[str, ...], concept_ids: tuple[str, ...],
+        self,
+        figure_ids: tuple[str, ...],
+        concept_ids: tuple[str, ...],
     ) -> None:
-        """Include only accepted edges between the *selected* endpoints."""
+        """
+        Add existing relationships between the selected figures and concepts
+        """
         concepts = {resource_iri("concept", cid) for cid in concept_ids}
         for figure_id in figure_ids:
             fig = resource_iri("figure", figure_id)
@@ -294,7 +377,9 @@ class _RDFSubset:
                     self.connect(fig, IPCC.mentionsConcept, concept)
 
     def schema_descriptions(self) -> None:
-        """Include descriptions of the two classes and only edge predicate."""
+        """
+        Add RDF class and relationship descriptions to the subgraph
+        """
         for klass in (IPCC.Figure, IPCC.ScientificConcept):
             for predicate in _CLASS_METADATA:
                 for value in self.source.objects(klass, predicate):
@@ -313,11 +398,11 @@ def build_subgraph(
     related_concepts: int = 5,
     match: MatchMode = "auto",
 ) -> KnowledgeSubgraph:
-    """Select a bounded Figure/Concept view; leave all other nodes hidden.
+    """
+    Build a focused subgraph from matching figures and related concepts
 
-    ``related_concepts`` is a TOTAL count, including the seed concept when
-    a glossary term was resolved. Extra source-backed Figure/Concept neighbors
-    remain accessible through ``view.neighbors`` and ``view.expand``.
+    Rank concepts by their coverage across the selected figures
+    and include their relationships and metadata
     """
     if type(limit) is not int or not 1 <= limit <= _MAX_FIGURES:
         raise ValueError(f"limit must be an integer between 1 and {_MAX_FIGURES}")
@@ -337,11 +422,13 @@ def build_subgraph(
     ranked = sorted(
         coverage,
         key=lambda term_id: (
-            -coverage[term_id], kg._concept_labels[term_id].casefold(), term_id
+            -coverage[term_id],
+            kg._concept_labels[term_id].casefold(),
+            term_id,
         ),
     )
     selected = ((seed,) if seed and related_concepts else ()) + tuple(
-        ranked[:max(0, related_concepts - (1 if seed else 0))]
+        ranked[: max(0, related_concepts - (1 if seed else 0))]
     )
 
     subset = _RDFSubset(kg._graph)

@@ -1,9 +1,8 @@
-"""Read-only discovery over the published IPCC AR6 figure knowledge graph.
+"""
+Provides access to the IPCC visual knowledge graph and its figure data
 
-The RDF ``ipcc:mentionsConcept`` edge is the authority for accepted
-figure–concept links. SQLite enriches those edges with original captions,
-image URL references, glossary definitions and auditable mention spans.
-No visual depiction, scientific causality, or semantic similarity is inferred.
+Supports concept and caption searches, figure retrieval,
+and exploration of related concepts
 """
 
 from __future__ import annotations
@@ -24,14 +23,15 @@ from rdflib.namespace import DCTERMS, RDF
 from concepts.vocabulary import normalize_term
 from ontology.schema import IPCC
 
-
 MatchMode = Literal["auto", "concept", "caption"]
 _WORKING_GROUPS = frozenset({"WG1", "WG2", "WG3"})
 
 
 @dataclass(frozen=True, slots=True)
 class CaptionMatch:
-    """An original-caption span; concept_id is absent for literal text search."""
+    """
+    Store a caption match with its text position and concept details
+    """
 
     start_offset: int
     end_offset: int
@@ -42,7 +42,9 @@ class CaptionMatch:
 
 @dataclass(frozen=True, slots=True)
 class CaptionMention:
-    """An auditable extractor output, including excluded candidate matches."""
+    """
+    Store a caption mention with its matching details and candidate concepts
+    """
 
     mention_id: int
     start_offset: int
@@ -58,12 +60,20 @@ class CaptionMention:
 
 @dataclass(frozen=True, slots=True)
 class ConceptSummary:
+    """
+    Store the ID and label of a concept
+    """
+
     term_id: str
     label: str
 
 
 @dataclass(frozen=True, slots=True)
 class Concept:
+    """
+    Store a concept with its definition, aliases, sources, and figure count
+    """
+
     term_id: str
     label: str
     definition: str | None
@@ -75,6 +85,10 @@ class Concept:
 
 @dataclass(frozen=True, slots=True)
 class Figure:
+    """
+    Store a figure with its metadata, images, concepts, and caption mentions
+    """
+
     figure_id: str
     label: str | None
     title: str | None
@@ -91,11 +105,18 @@ class Figure:
 
     @property
     def image_url(self) -> str | None:
+        """
+        Return the first image URL or None if no images are available
+        """
         return self.image_urls[0] if self.image_urls else None
 
 
 @dataclass(frozen=True, slots=True)
 class FigureHit:
+    """
+    Store a matching figure with its source details and caption matches
+    """
+
     figure_id: str
     label: str | None
     title: str | None
@@ -107,12 +128,17 @@ class FigureHit:
 
     @property
     def match_count(self) -> int:
+        """
+        Return the number of caption matches found in the figure
+        """
         return len(self.matches)
 
 
 @dataclass(frozen=True, slots=True)
 class SearchResults:
-    """A sequence of ranked matches; total is before the result limit."""
+    """
+    Store figure search results with the query, match type, and total count
+    """
 
     query: str
     match: Literal["concept", "caption"]
@@ -121,24 +147,42 @@ class SearchResults:
     concept_id: str | None = None
 
     def __len__(self) -> int:
+        """
+        Return the number of figures included in the results
+        """
         return len(self.items)
 
     def __iter__(self) -> Iterator[FigureHit]:
+        """
+        Iterate over the matching figures
+        """
         return iter(self.items)
 
     def __getitem__(self, index: int | slice) -> FigureHit | tuple[FigureHit, ...]:
+        """
+        Return a figure or slice of figures from the results
+        """
         return self.items[index]
 
     def __repr__(self) -> str:
-        return (f"SearchResults(query={self.query!r}, match={self.match!r}, "
-                f"total={self.total}, shown={len(self.items)})")
+        """
+        Return a short description of the search results
+        """
+        return (
+            f"SearchResults(query={self.query!r}, match={self.match!r}, "
+            f"total={self.total}, shown={len(self.items)})"
+        )
 
     def to_dataframe(self):
-        """Convert displayed matches to pandas (optional dependency)."""
+        """
+        Convert the search results into a pandas DataFrame
+        """
         try:
             import pandas as pd
         except ImportError as exc:
-            raise ImportError("to_dataframe() requires pandas: pip install pandas") from exc
+            raise ImportError(
+                "to_dataframe() requires pandas: pip install pandas"
+            ) from exc
         return pd.DataFrame.from_records(
             (
                 {
@@ -153,13 +197,23 @@ class SearchResults:
                 }
                 for hit in self.items
             ),
-            columns=("figure_id", "figure_label", "title", "working_group",
-                     "section", "match_count", "image_url", "source_url"),
+            columns=(
+                "figure_id",
+                "figure_label",
+                "title",
+                "working_group",
+                "section",
+                "match_count",
+                "image_url",
+                "source_url",
+            ),
         )
 
 
 def _read_only_connection(path: Path) -> sqlite3.Connection:
-    # Path.as_uri() quotes spaces, '?' and '#' correctly for SQLite file URIs.
+    """
+    Open a SQLite database connection in read-only mode
+    """
     db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA query_only = ON")
@@ -168,11 +222,17 @@ def _read_only_connection(path: Path) -> sqlite3.Connection:
 
 @contextmanager
 def _database(path: Path) -> Iterator[sqlite3.Connection]:
+    """
+    Provide a read-only database connection and close it after use
+    """
     with closing(_read_only_connection(path)) as db:
         yield db
 
 
 def _sha256(path: Path) -> str:
+    """
+    Calculate the SHA-256 checksum of a file
+    """
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -181,6 +241,9 @@ def _sha256(path: Path) -> str:
 
 
 def _working_group(value: str | None) -> str | None:
+    """
+    Validate and standardize a working-group code
+    """
     if value is None:
         return None
     if not isinstance(value, str) or value.strip().upper() not in _WORKING_GROUPS:
@@ -189,20 +252,24 @@ def _working_group(value: str | None) -> str | None:
 
 
 def _nonempty(value: str, name: str) -> str:
+    """
+    Validate and return a nonempty string without surrounding spaces
+    """
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a nonempty string")
     return value.strip()
 
 
 class IPCCGraph:
-    """Explore a published IPCC graph without modifying the input artifacts.
-
-    Construct via :meth:`from_repo`, with a local checkout containing the
-    existing ``ontology/`` and ``data/processed/`` directories.
+    """
+    Provide search and retrieval access to the IPCC visual knowledge graph
     """
 
     def __init__(
-        self, *, graph_path: str | Path, corpus_path: str | Path,
+        self,
+        *,
+        graph_path: str | Path,
+        corpus_path: str | Path,
         concepts_path: str | Path,
     ) -> None:
         self.graph_path = Path(graph_path).expanduser().resolve()
@@ -210,7 +277,9 @@ class IPCCGraph:
         self.concepts_path = Path(concepts_path).expanduser().resolve()
         for path in (self.graph_path, self.corpus_path, self.concepts_path):
             if not path.is_file():
-                raise FileNotFoundError(f"Required published artifact not found: {path}")
+                raise FileNotFoundError(
+                    f"Required published artifact not found: {path}"
+                )
 
         self._graph = Graph()
         self._graph.parse(self.graph_path, format="turtle")
@@ -233,9 +302,8 @@ class IPCCGraph:
             if corpus_digest and corpus_digest[0] != _sha256(self.corpus_path):
                 raise ValueError("concepts.db was built from a different corpus.db")
             stored_pairs = {
-                (row[0], row[1]) for row in db.execute(
-                    "SELECT figure_id, term_id FROM figure_concepts"
-                )
+                (row[0], row[1])
+                for row in db.execute("SELECT figure_id, term_id FROM figure_concepts")
             }
 
         self._lookup = {key: tuple(sorted(ids)) for key, ids in aliases.items()}
@@ -245,15 +313,19 @@ class IPCCGraph:
 
     @classmethod
     def from_repo(cls, root: str | Path | None = None) -> IPCCGraph:
-        """Load committed artifacts from this repository or a supplied checkout."""
-        repo = (Path(root).expanduser().resolve() if root is not None
-                else Path(__file__).resolve().parents[1])
+        """
+        Load the knowledge graph from the repository's published files
+        """
+        repo = (
+            Path(root).expanduser().resolve()
+            if root is not None
+            else Path(__file__).resolve().parents[1]
+        )
         corpus = repo / "data/processed/corpus.db"
         concepts = repo / "data/processed/concepts.db"
         graph = repo / "ontology/ipcc_visual_knowledge_graph.ttl"
         report = repo / "reports/ontology_quality.json"
 
-        # When the build report is present, reject mismatched database snapshots.
         if report.is_file() and corpus.is_file() and concepts.is_file():
             expected = json.loads(report.read_text(encoding="utf-8")).get("inputs", {})
             for key, file in (("corpus_sha256", corpus), ("concepts_sha256", concepts)):
@@ -265,8 +337,13 @@ class IPCCGraph:
         return cls(graph_path=graph, corpus_path=corpus, concepts_path=concepts)
 
     def _index_graph(self, stored_pairs: set[tuple[str, str]]) -> None:
+        """
+        Check graph relationships against the databases and index concept links
+        """
         with _database(self.corpus_path) as db:
-            known_figures = {row[0] for row in db.execute("SELECT figure_id FROM figures")}
+            known_figures = {
+                row[0] for row in db.execute("SELECT figure_id FROM figures")
+            }
 
         graph_figures = {
             str(self._graph.value(node, DCTERMS.identifier))
@@ -276,24 +353,35 @@ class IPCCGraph:
             str(self._graph.value(node, DCTERMS.identifier))
             for node in self._graph.subjects(RDF.type, IPCC.ScientificConcept)
         }
-        if graph_figures != known_figures or graph_concepts != set(self._concept_labels):
-            raise ValueError("RDF figures/concepts do not match the supplied SQLite databases")
+        if graph_figures != known_figures or graph_concepts != set(
+            self._concept_labels
+        ):
+            raise ValueError(
+                "RDF figures/concepts do not match the supplied SQLite databases"
+            )
 
         by_concept: dict[str, set[str]] = defaultdict(set)
         by_figure: dict[str, set[str]] = defaultdict(set)
         graph_pairs: set[tuple[str, str]] = set()
-        for figure_node, concept_node in self._graph.subject_objects(IPCC.mentionsConcept):
+        for figure_node, concept_node in self._graph.subject_objects(
+            IPCC.mentionsConcept
+        ):
             figure_id = str(self._graph.value(figure_node, DCTERMS.identifier))
             term_id = str(self._graph.value(concept_node, DCTERMS.identifier))
             graph_pairs.add((figure_id, term_id))
             by_concept[term_id].add(figure_id)
             by_figure[figure_id].add(term_id)
         if graph_pairs != stored_pairs:
-            raise ValueError("Accepted RDF figure–concept links differ from concepts.db")
+            raise ValueError(
+                "Accepted RDF figure–concept links differ from concepts.db"
+            )
         self._by_concept = {key: frozenset(value) for key, value in by_concept.items()}
         self._by_figure = {key: frozenset(value) for key, value in by_figure.items()}
 
     def _resolve_concept(self, query: str) -> str | None:
+        """
+        Find a concept ID from its label, alias, or ID and reject ambiguous matches
+        """
         if query in self._concept_labels:
             return query
         matches = self._lookup.get(normalize_term(query), ())
@@ -308,14 +396,15 @@ class IPCCGraph:
         return matches[0] if matches else None
 
     def search(
-        self, query: str, *, wg: str | None = None, limit: int | None = 20,
+        self,
+        query: str,
+        *,
+        wg: str | None = None,
+        limit: int | None = 20,
         match: MatchMode = "auto",
     ) -> SearchResults:
-        """Find figures by accepted glossary links or a literal caption phrase.
-
-        ``auto`` selects an *exact* glossary label/alias first; otherwise it
-        falls back to case-insensitive literal caption search. ``concept`` never
-        falls back. ``caption`` does not claim a resolved scientific concept.
+        """
+        Search figures by concept or caption text with optional working-group filtering
         """
         query = _nonempty(query, "query")
         wg = _working_group(wg)
@@ -346,9 +435,9 @@ class IPCCGraph:
                             "FROM mentions WHERE term_id = ? ORDER BY start_offset, end_offset",
                             (term_id,),
                         ):
-                            evidence[row[0]].append(CaptionMatch(
-                                row[1], row[2], row[3], term_id, row[4]
-                            ))
+                            evidence[row[0]].append(
+                                CaptionMatch(row[1], row[2], row[3], term_id, row[4])
+                            )
                 for row in rows:
                     if row["figure_id"] in valid_figures:
                         hits.append(self._hit(row, tuple(evidence[row["figure_id"]])))
@@ -365,19 +454,34 @@ class IPCCGraph:
                         hits.append(self._hit(row, found))
 
         hits.sort(key=lambda h: (-h.match_count, h.working_group, h.figure_id))
-        return SearchResults(query, selected_mode, len(hits),
-                             tuple(hits if limit is None else hits[:limit]), term_id)
+        return SearchResults(
+            query,
+            selected_mode,
+            len(hits),
+            tuple(hits if limit is None else hits[:limit]),
+            term_id,
+        )
 
     @staticmethod
     def _hit(row: sqlite3.Row, matches: tuple[CaptionMatch, ...]) -> FigureHit:
+        """
+        Convert a database row and its caption matches into a figure search result
+        """
         return FigureHit(
-            row["figure_id"], row["figure_label"], row["title"],
-            row["working_group"], row["section"], row["source_url"],
-            row["image_url"], matches,
+            row["figure_id"],
+            row["figure_label"],
+            row["title"],
+            row["working_group"],
+            row["section"],
+            row["source_url"],
+            row["image_url"],
+            matches,
         )
 
     def concept(self, query: str) -> Concept:
-        """Retrieve a glossary entry and its figure-connection count."""
+        """
+        Retrieve a concept with its glossary details and linked figure count
+        """
         query = _nonempty(query, "query")
         term_id = self._resolve_concept(query)
         if term_id is None:
@@ -387,39 +491,66 @@ class IPCCGraph:
                 "SELECT canonical_label, definition FROM concepts WHERE term_id = ?",
                 (term_id,),
             ).fetchone()
-            aliases = tuple(r[0] for r in db.execute(
-                "SELECT alias FROM concept_aliases WHERE term_id = ? ORDER BY alias",
-                (term_id,),
-            ))
-            groups = tuple(r[0] for r in db.execute(
-                "SELECT working_group FROM concept_working_groups "
-                "WHERE term_id = ? ORDER BY working_group", (term_id,),
-            ))
-            series = tuple(r[0] for r in db.execute(
-                "SELECT series FROM concept_source_series "
-                "WHERE term_id = ? ORDER BY series", (term_id,),
-            ))
-        return Concept(term_id, row["canonical_label"], row["definition"],
-                       aliases, groups, series,
-                       len(self._by_concept.get(term_id, ())))
+            aliases = tuple(
+                r[0]
+                for r in db.execute(
+                    "SELECT alias FROM concept_aliases WHERE term_id = ? ORDER BY alias",
+                    (term_id,),
+                )
+            )
+            groups = tuple(
+                r[0]
+                for r in db.execute(
+                    "SELECT working_group FROM concept_working_groups "
+                    "WHERE term_id = ? ORDER BY working_group",
+                    (term_id,),
+                )
+            )
+            series = tuple(
+                r[0]
+                for r in db.execute(
+                    "SELECT series FROM concept_source_series "
+                    "WHERE term_id = ? ORDER BY series",
+                    (term_id,),
+                )
+            )
+        return Concept(
+            term_id,
+            row["canonical_label"],
+            row["definition"],
+            aliases,
+            groups,
+            series,
+            len(self._by_concept.get(term_id, ())),
+        )
 
     def explore(
-        self, query: str, *, wg: str | None = None, limit: int = 20,
-        related_concepts: int = 5, match: MatchMode = "auto",
+        self,
+        query: str,
+        *,
+        wg: str | None = None,
+        limit: int = 20,
+        related_concepts: int = 5,
+        match: MatchMode = "auto",
     ) -> "KnowledgeSubgraph":
-        """Select a focused, source-backed RDF subgraph for visualization.
-
-        The returned object contains a query-specific RDF graph and ranked
-        figure hits; rendering will be added by the visualization module.
+        """
+        Build a knowledge subgraph around a search query and related concepts
         """
         from .subgraph import build_subgraph
+
         return build_subgraph(
-            self, query, wg=wg, limit=limit,
-            related_concepts=related_concepts, match=match,
+            self,
+            query,
+            wg=wg,
+            limit=limit,
+            related_concepts=related_concepts,
+            match=match,
         )
 
     def figure(self, figure_id: str) -> Figure:
-        """Retrieve the original figure record and all caption mention evidence."""
+        """
+        Retrieve a figure with its metadata, images, concepts, and caption mentions
+        """
         figure_id = _nonempty(figure_id, "figure_id")
         with _database(self.corpus_path) as db:
             row = db.execute(
@@ -427,10 +558,14 @@ class IPCCGraph:
             ).fetchone()
             if row is None:
                 raise KeyError(f"Unknown figure ID: {figure_id!r}")
-            images = tuple(r[0] for r in db.execute(
-                "SELECT image_url FROM figure_images WHERE figure_id = ? "
-                "ORDER BY position", (figure_id,),
-            ))
+            images = tuple(
+                r[0]
+                for r in db.execute(
+                    "SELECT image_url FROM figure_images WHERE figure_id = ? "
+                    "ORDER BY position",
+                    (figure_id,),
+                )
+            )
         with _database(self.concepts_path) as db:
             candidates: dict[int, list[str]] = defaultdict(list)
             for mention_id, candidate_id in db.execute(
@@ -440,24 +575,47 @@ class IPCCGraph:
                 (figure_id,),
             ):
                 candidates[mention_id].append(candidate_id)
-            mentions = tuple(CaptionMention(
-                m["mention_id"], m["start_offset"], m["end_offset"],
-                m["matched_text"], m["normalized_text"], m["match_kind"],
-                m["resolution"], m["term_id"],
-                tuple(candidates[m["mention_id"]]), m["quality_rule"],
-            ) for m in db.execute(
-                "SELECT * FROM mentions WHERE figure_id = ? "
-                "ORDER BY start_offset, end_offset, mention_id", (figure_id,),
-            ))
+            mentions = tuple(
+                CaptionMention(
+                    m["mention_id"],
+                    m["start_offset"],
+                    m["end_offset"],
+                    m["matched_text"],
+                    m["normalized_text"],
+                    m["match_kind"],
+                    m["resolution"],
+                    m["term_id"],
+                    tuple(candidates[m["mention_id"]]),
+                    m["quality_rule"],
+                )
+                for m in db.execute(
+                    "SELECT * FROM mentions WHERE figure_id = ? "
+                    "ORDER BY start_offset, end_offset, mention_id",
+                    (figure_id,),
+                )
+            )
         linked = self._by_figure.get(figure_id, frozenset())
-        summaries = tuple(sorted(
-            (ConceptSummary(term_id, self._concept_labels[term_id]) for term_id in linked),
-            key=lambda c: (c.label.casefold(), c.term_id),
-        ))
+        summaries = tuple(
+            sorted(
+                (
+                    ConceptSummary(term_id, self._concept_labels[term_id])
+                    for term_id in linked
+                ),
+                key=lambda c: (c.label.casefold(), c.term_id),
+            )
+        )
         return Figure(
-            row["figure_id"], row["figure_label"], row["title"],
-            row["working_group"], row["chapter"], row["section"],
-            row["caption"], row["caption_status"], images,
-            row["source_url"], row["copyright_policy_url"],
-            summaries, mentions,
+            row["figure_id"],
+            row["figure_label"],
+            row["title"],
+            row["working_group"],
+            row["chapter"],
+            row["section"],
+            row["caption"],
+            row["caption_status"],
+            images,
+            row["source_url"],
+            row["copyright_policy_url"],
+            summaries,
+            mentions,
         )

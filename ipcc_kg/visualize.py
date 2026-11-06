@@ -1,12 +1,10 @@
-"""Standalone, ontology-aware IPCC figure knowledge-graph explorer.
-The network is a presentation of *existing* RDF triples, not a source of new
-scientific claims. Figure--concept links mean caption mentions, and ambiguous
-or excluded candidate terms remain separate evidence. Full source captions and
-glossary definitions are intentionally not embedded in exported HTML.
-The renderer uses native SVG and a small, embedded force layout: no browser
-library, CDN, server, or additional Python dependency is required. Published
-IPCC images are referenced by URL, never downloaded or redistributed here.
 """
+Creates interactive visualizations of the IPCC knowledge graph
+
+Prepares graph data, figure details, and concept evidence
+for HTML export and notebook display
+"""
+
 from __future__ import annotations
 from collections import defaultdict
 from html import escape
@@ -21,9 +19,10 @@ from urllib.parse import unquote, urlsplit
 from rdflib import Graph, URIRef
 from rdflib.namespace import DCTERMS, RDF, RDFS, SKOS
 from ontology.schema import IPCC, resource_iri
+
 if TYPE_CHECKING:
     from .subgraph import KnowledgeSubgraph
-# Figure, ScientificConcept and mentionsConcept are the only visible entities/edges.
+
 _RELATIONS: dict[URIRef, tuple[str, str]] = {
     IPCC.mentionsConcept: ("mentionsConcept", "caption"),
 }
@@ -33,53 +32,81 @@ _CLASSES: tuple[tuple[URIRef, str], ...] = (
 )
 _MAX_ATTRIBUTES = 48
 _MAX_ATTRIBUTE_CHARS = 1200
+
+
 def _public_url(value: object) -> str | None:
-    """Accept navigable HTTP(S) URLs only, never active-content schemes."""
+    """
+    Check whether a value is a valid public HTTP or HTTPS URL
+    """
     if not isinstance(value, str) or not value or value != value.strip():
         return None
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         return None
     try:
         parts = urlsplit(value)
-        if (parts.scheme not in {"https", "http"} or not parts.hostname
-                or parts.username is not None or parts.password is not None):
+        if (
+            parts.scheme not in {"https", "http"}
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+        ):
             return None
         _ = parts.port
     except ValueError:
         return None
     return value
+
+
 def _text(graph: Graph, subject: URIRef, predicate: URIRef) -> str | None:
+    """
+    Read a text value for a given RDF subject and predicate
+    """
     value = graph.value(subject, predicate)
     return str(value) if value is not None else None
+
+
 def _short_label(value: URIRef) -> str:
+    """
+    Create a readable label from the last part of a resource IRI
+    """
     return unquote(str(value).rsplit("/", 1)[-1].rsplit("#", 1)[-1]).replace("_", " ")
-def _safe_attributes(graph: Graph, uri: URIRef, known: set[str]) -> list[dict[str, str]]:
-    """Show source-backed metadata without publishing complete captions."""
+
+
+def _safe_attributes(
+    graph: Graph, uri: URIRef, known: set[str]
+) -> list[dict[str, str]]:
+    """
+    Collect RDF attributes for display while limiting their size and checking URLs
+    """
     attributes: list[dict[str, str]] = []
-    for predicate, value in sorted(graph.predicate_objects(uri),
-                                   key=lambda item: (str(item[0]), str(item[1]))):
+    for predicate, value in sorted(
+        graph.predicate_objects(uri), key=lambda item: (str(item[0]), str(item[1]))
+    ):
         if predicate in {RDF.type, IPCC.captionText, IPCC.mentionsConcept}:
             continue
         text_value = str(value)
         if len(text_value) > _MAX_ATTRIBUTE_CHARS:
             text_value = text_value[:_MAX_ATTRIBUTE_CHARS] + "…"
-        attributes.append({
-            "predicate": str(predicate),
-            "label": _short_label(predicate),
-            "value": text_value,
-            "url": _public_url(text_value) if isinstance(value, URIRef) else None,
-        })
+        attributes.append(
+            {
+                "predicate": str(predicate),
+                "label": _short_label(predicate),
+                "value": text_value,
+                "url": _public_url(text_value) if isinstance(value, URIRef) else None,
+            }
+        )
     return attributes[:_MAX_ATTRIBUTES]
+
+
 def _db_data(corpus_path: Path, concepts_path: Path) -> tuple[
-    dict[str, dict[str, Any]], 
+    dict[str, dict[str, Any]],
     dict[str, list[str]],
-    dict[str, list[dict[str, Any]]], 
+    dict[str, list[dict[str, Any]]],
     dict[str, str],
     dict[str, str | None],
-    ]:
-    """Load the original inspector details, not extra RDF instance nodes.
-    The local checkout's SQLite sources are read-only. All image URLs retain
-    database position order; only matched evidence snippets are exported.
+]:
+    """
+    Load figure details, images, caption mentions, and concepts from SQLite databases
     """
     if not corpus_path.is_file() or not concepts_path.is_file():
         raise FileNotFoundError(
@@ -107,10 +134,12 @@ def _db_data(corpus_path: Path, concepts_path: Path) -> tuple[
     with sqlite3.connect(concepts_path.resolve().as_uri() + "?mode=ro", uri=True) as db:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA query_only=ON")
-        for term_id, label, definition in db.execute("SELECT term_id, canonical_label, definition FROM concepts"):
-          concept_uri = str(resource_iri("concept", term_id))
-          labels[concept_uri] = label
-          definitions[concept_uri] = definition
+        for term_id, label, definition in db.execute(
+            "SELECT term_id, canonical_label, definition FROM concepts"
+        ):
+            concept_uri = str(resource_iri("concept", term_id))
+            labels[concept_uri] = label
+            definitions[concept_uri] = definition
         candidates: dict[int, list[str]] = defaultdict(list)
         for mention_id, term_id in db.execute(
             "SELECT mention_id, term_id FROM mention_candidates ORDER BY mention_id, term_id"
@@ -121,49 +150,76 @@ def _db_data(corpus_path: Path, concepts_path: Path) -> tuple[
             "match_kind, resolution, quality_rule, term_id FROM mentions "
             "ORDER BY figure_id, start_offset, end_offset, mention_id"
         ):
-            mentions[row["figure_id"]].append({
-                "id": row["mention_id"],
-                "text": row["matched_text"],
-                "start": row["start_offset"],
-                "end": row["end_offset"],
-                "matchKind": row["match_kind"],
-                "resolution": row["resolution"],
-                "qualityRule": row["quality_rule"],
-                "selected": (str(resource_iri("concept", row["term_id"]))
-                             if row["term_id"] else None),
-                "candidates": candidates[row["mention_id"]],
-            })
+            mentions[row["figure_id"]].append(
+                {
+                    "id": row["mention_id"],
+                    "text": row["matched_text"],
+                    "start": row["start_offset"],
+                    "end": row["end_offset"],
+                    "matchKind": row["match_kind"],
+                    "resolution": row["resolution"],
+                    "qualityRule": row["quality_rule"],
+                    "selected": (
+                        str(resource_iri("concept", row["term_id"]))
+                        if row["term_id"]
+                        else None
+                    ),
+                    "candidates": candidates[row["mention_id"]],
+                }
+            )
     return figures, images, mentions, labels, definitions
+
+
 def _visualization_data(view: KnowledgeSubgraph) -> dict[str, Any]:
-    """Create initial nodes plus hidden, real Figure–Concept neighbors.
-    ``view.graph`` stays the user-sized RDF selection. ``view._source`` is
-    the complete published RDF, used *only* to provide expandable links in
-    standalone HTML. No new scientific assertion or third entity type is made.
+    """
+    Prepare graph nodes, relationships, and supporting evidence for visualization
+
+    Include connected resources, figure details, and concept information
     """
     rdf = view.graph
     source = view._source if view._source is not None else rdf
     kg = getattr(view, "_kg", None)
     root = Path(__file__).resolve().parents[1]
     figures_db, image_db, evidence_db, concept_labels, concept_definitions = _db_data(
-        kg.corpus_path if kg is not None and hasattr(kg, "corpus_path") else root / "data/processed/corpus.db",
-        kg.concepts_path if kg is not None and hasattr(kg, "concepts_path") else root / "data/processed/concepts.db",
+        (
+            kg.corpus_path
+            if kg is not None and hasattr(kg, "corpus_path")
+            else root / "data/processed/corpus.db"
+        ),
+        (
+            kg.concepts_path
+            if kg is not None and hasattr(kg, "concepts_path")
+            else root / "data/processed/concepts.db"
+        ),
     )
-    # Explicit Python view.expand() additions are already in view.graph and
-    # should be visible immediately; unexpanded viewers retain the API limit.
-    expanded_ids = sorted({str(node)
-                           for klass in (IPCC.Figure, IPCC.ScientificConcept)
-                           for node in rdf.subjects(RDF.type, klass)})
-    initial_ids = list(dict.fromkeys(
-        [str(resource_iri("concept", c.term_id)) for c in view.concepts]
-        + [str(resource_iri("figure", f.figure_id)) for f in view.figures]
-        + expanded_ids
-    ))
+
+    expanded_ids = sorted(
+        {
+            str(node)
+            for klass in (IPCC.Figure, IPCC.ScientificConcept)
+            for node in rdf.subjects(RDF.type, klass)
+        }
+    )
+    initial_ids = list(
+        dict.fromkeys(
+            [str(resource_iri("concept", c.term_id)) for c in view.concepts]
+            + [str(resource_iri("figure", f.figure_id)) for f in view.figures]
+            + expanded_ids
+        )
+    )
     allowed_figures = {
-        node for node in source.subjects(RDF.type, IPCC.Figure)
-        if (not view._wg_filter or
-            (_text(source, node, IPCC.workingGroupCode) or
-             figures_db.get(_text(source, node, DCTERMS.identifier) or "", {}).get(
-                 "working_group")) == view._wg_filter)
+        node
+        for node in source.subjects(RDF.type, IPCC.Figure)
+        if (
+            not view._wg_filter
+            or (
+                _text(source, node, IPCC.workingGroupCode)
+                or figures_db.get(
+                    _text(source, node, DCTERMS.identifier) or "", {}
+                ).get("working_group")
+            )
+            == view._wg_filter
+        )
     }
     allowed_concepts = set(source.subjects(RDF.type, IPCC.ScientificConcept))
     allowed = allowed_figures | allowed_concepts
@@ -174,9 +230,12 @@ def _visualization_data(view: KnowledgeSubgraph) -> dict[str, Any]:
             pairs.append((fig, concept))
             adjacency[fig].add(concept)
             adjacency[concept].add(fig)
-    # Only the connected components touching the initial selection are exposed
-    # for expansion; unrelated graph components are not exported unnecessarily.
-    reachable = {URIRef(identifier) for identifier in initial_ids if URIRef(identifier) in allowed}
+
+    reachable = {
+        URIRef(identifier)
+        for identifier in initial_ids
+        if URIRef(identifier) in allowed
+    }
     frontier = list(reachable)
     for current in frontier:
         for other in adjacency.get(current, ()):
@@ -188,16 +247,24 @@ def _visualization_data(view: KnowledgeSubgraph) -> dict[str, Any]:
     nodes: list[dict[str, Any]] = []
     for uri in sorted(reachable, key=str):
         kind = "figure" if uri in allowed_figures else "concept"
-        rdf_types = sorted(str(typ) for typ in source.objects(uri, RDF.type)
-                           if isinstance(typ, URIRef))
+        rdf_types = sorted(
+            str(typ) for typ in source.objects(uri, RDF.type) if isinstance(typ, URIRef)
+        )
         klass = IPCC.Figure if kind == "figure" else IPCC.ScientificConcept
         identifier = _text(source, uri, DCTERMS.identifier)
         node = {
-            "id": str(uri), "kind": kind,
-            "label": (figures_db.get(identifier or "", {}).get("figure_label")
-                      or figures_db.get(identifier or "", {}).get("title")
-                      or identifier or _short_label(uri)) if kind == "figure" else (
-                      _text(source, uri, SKOS.prefLabel) or _short_label(uri)),
+            "id": str(uri),
+            "kind": kind,
+            "label": (
+                (
+                    figures_db.get(identifier or "", {}).get("figure_label")
+                    or figures_db.get(identifier or "", {}).get("title")
+                    or identifier
+                    or _short_label(uri)
+                )
+                if kind == "figure"
+                else (_text(source, uri, SKOS.prefLabel) or _short_label(uri))
+            ),
             "types": rdf_types,
             "typeDescription": _text(source, klass, RDFS.comment),
             "attributes": _safe_attributes(source, uri, known),
@@ -209,18 +276,35 @@ def _visualization_data(view: KnowledgeSubgraph) -> dict[str, Any]:
                 "id": identifier,
                 "title": row.get("title") or (hit.title if hit else None),
                 "captionPreview": (
-                  (row.get("caption") or "").strip()[:320].rsplit(" ", 1)[0] + "…"
-                  if len((row.get("caption") or "").strip()) > 320
-                  else (row.get("caption") or "").strip()
+                    (row.get("caption") or "").strip()[:320].rsplit(" ", 1)[0] + "…"
+                    if len((row.get("caption") or "").strip()) > 320
+                    else (row.get("caption") or "").strip()
                 ),
-                "wg": row.get("working_group") or _text(source, uri, IPCC.workingGroupCode),
+                "wg": row.get("working_group")
+                or _text(source, uri, IPCC.workingGroupCode),
                 "section": row.get("section") or _text(source, uri, IPCC.sectionCode),
                 "source": _public_url(_text(source, uri, DCTERMS.source)),
                 "captionStatus": _text(source, uri, IPCC.captionStatus),
-                "matches": ([{"text": m.text, "start": m.start_offset,
-                              "end": m.end_offset} for m in hit.matches] if hit else []),
-                "images": (image_db.get(identifier or "") or sorted(
-                    filter(None, (_public_url(str(url)) for url in source.objects(uri, IPCC.imageURL))))),
+                "matches": (
+                    [
+                        {"text": m.text, "start": m.start_offset, "end": m.end_offset}
+                        for m in hit.matches
+                    ]
+                    if hit
+                    else []
+                ),
+                "images": (
+                    image_db.get(identifier or "")
+                    or sorted(
+                        filter(
+                            None,
+                            (
+                                _public_url(str(url))
+                                for url in source.objects(uri, IPCC.imageURL)
+                            ),
+                        )
+                    )
+                ),
                 "mentions": evidence_db.get(identifier or "", []),
             }
         else:
@@ -228,9 +312,9 @@ def _visualization_data(view: KnowledgeSubgraph) -> dict[str, Any]:
                 "id": identifier,
                 "definition": concept_definitions.get(str(uri)),
                 "aliases": sorted(
-                  {str(x) for x in source.objects(uri, SKOS.altLabel)},
-                  key=str.casefold
-                  ),
+                    {str(x) for x in source.objects(uri, SKOS.altLabel)},
+                    key=str.casefold,
+                ),
                 "source": _public_url(_text(source, uri, DCTERMS.source)),
             }
         nodes.append(node)
@@ -240,19 +324,28 @@ def _visualization_data(view: KnowledgeSubgraph) -> dict[str, Any]:
             continue
         predicate = IPCC.mentionsConcept
         a, b = str(fig), str(concept)
-        edges.append({
-            "id": f"{a}|{predicate}|{b}",
-            "from": a, "to": b, "predicate": str(predicate),
-            "label": "mentions",
-            "description": _text(source, predicate, RDFS.comment),
-            "domain": sorted(str(x) for x in source.objects(predicate, RDFS.domain)),
-            "range": sorted(str(x) for x in source.objects(predicate, RDFS.range)),
-            "family": "caption",
-        })
+        edges.append(
+            {
+                "id": f"{a}|{predicate}|{b}",
+                "from": a,
+                "to": b,
+                "predicate": str(predicate),
+                "label": "mentions",
+                "description": _text(source, predicate, RDFS.comment),
+                "domain": sorted(
+                    str(x) for x in source.objects(predicate, RDFS.domain)
+                ),
+                "range": sorted(str(x) for x in source.objects(predicate, RDFS.range)),
+                "family": "caption",
+            }
+        )
     edges.sort(key=lambda item: (item["from"], item["to"]))
     visible = [identifier for identifier in initial_ids if identifier in known]
-    seed = (str(resource_iri("concept", view.concepts[0].term_id))
-            if view.match == "concept" and view.concepts else (visible[0] if visible else None))
+    seed = (
+        str(resource_iri("concept", view.concepts[0].term_id))
+        if view.match == "concept" and view.concepts
+        else (visible[0] if visible else None)
+    )
     return {
         "query": view.query,
         "match": view.match,
@@ -266,7 +359,9 @@ def _visualization_data(view: KnowledgeSubgraph) -> dict[str, Any]:
         "rdfTriples": len(rdf),
         "semantics": "Caption mentions concept; not visual depiction or scientific causality.",
     }
-_HTML_DOCUMENT = r'''<!doctype html>
+
+
+_HTML_DOCUMENT = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1304,35 +1399,46 @@ footer {display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:var(-
 </script>
 <noscript><p style="padding:15px">JavaScript is required for interactive network rendering. The RDF data is not affected.</p></noscript>
 </body>
-</html>'''
+</html>"""
+
+
 def render_html(view: KnowledgeSubgraph) -> str:
-    """Render a self-contained, source-backed IPCC knowledge graph document.
-    The HTML has no external JavaScript/CSS dependency. External image URLs and
-    IPCC source links remain remote references. Only evidence snippets and RDF
-    metadata, not full copyrighted captions or definitions, are embedded.
+    """
+    Build a complete HTML visualization with embedded graph data
     """
     payload = _visualization_data(view)
     serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-    # Source labels, captions and aliases are untrusted HTML-script text.
-    serialized = (serialized.replace("&", "\\u0026").replace("<", "\\u003c")
-                  .replace(">", "\\u003e"))
+
+    serialized = (
+        serialized.replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+    )
     replacements = {
         "__IPCC_TITLE__": escape(view.query),
         "__IPCC_DATA__": serialized,
     }
     return re.sub(
         r"__IPCC_(?:TITLE|DATA)__",
-        lambda match: replacements[match.group()], _HTML_DOCUMENT,
+        lambda match: replacements[match.group()],
+        _HTML_DOCUMENT,
     )
+
+
 def save_html(view: KnowledgeSubgraph, path: str | Path) -> Path:
-    """Atomically save a portable HTML graph without modifying the source RDF."""
+    """
+    Save the interactive graph visualization to an HTML file
+    """
     output = Path(path).expanduser()
     if output.suffix.lower() not in {".html", ".htm"}:
         raise ValueError("HTML output must end in .html or .htm")
     document = render_html(view)
     with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=output.parent,
-        prefix=f".{output.name}.", delete=False,
+        mode="w",
+        encoding="utf-8",
+        dir=output.parent,
+        prefix=f".{output.name}.",
+        delete=False,
     ) as stage:
         temporary = Path(stage.name)
     try:
@@ -1344,8 +1450,12 @@ def save_html(view: KnowledgeSubgraph, path: str | Path) -> Path:
     finally:
         temporary.unlink(missing_ok=True)
     return output
+
+
 def show_subgraph(view: KnowledgeSubgraph, *, height: int = 650) -> None:
-    """Display the standalone graph inside a sandboxed Colab/Jupyter iframe."""
+    """
+    Display the interactive graph visualization inside a Jupyter notebook
+    """
     if type(height) is not int or not 350 <= height <= 1600:
         raise ValueError("height must be an integer between 350 and 1600 pixels")
     try:
