@@ -1,14 +1,8 @@
 """
-Validate figure records collected from IPCC AR6 Working Groups I, II and III
+Defines the data model for IPCC AR6 figures
 
-- Defines the schema for Phase 1 raw JSON files (data/raw/wg{1,2,3}.json)
-- Checks record structure and source information
-- Does not clean data, fetch URLs, or generate missing captions
-- Does not verify whether an image is an actual figure
-- Leaves data cleaning and corpus building for Phase 2
-
-Requires:
-    Pydantic 2.x
+Validates figure details, image links, timestamps and source
+information to keep the collected data consistent
 """
 
 from __future__ import annotations
@@ -19,21 +13,15 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
 WorkingGroup = Literal["WG1", "WG2", "WG3"]
 
 
 class FigureRecord(BaseModel):
     """
-    Represent a figure collected from an official IPCC AR6 page
-
-    - Store the figure's available metadata
-    - Allow missing captions, chapters or titles
-    - Keep optional fields for figures with incomplete information
+    Store and validate the details of an IPCC figure
     """
 
     model_config = ConfigDict(extra="forbid", strict=True)
-
     schema_version: Literal["1.0"]
     figure_id: str = Field(min_length=1)
     working_group: WorkingGroup
@@ -55,6 +43,9 @@ class FigureRecord(BaseModel):
     )
     @classmethod
     def validate_url(cls, value: str | None) -> str | None:
+        """
+        Check if the URL is a valid HTTP or HTTPS link
+        """
         if value is None:
             return None
         parts = urlsplit(value)
@@ -65,6 +56,9 @@ class FigureRecord(BaseModel):
     @field_validator("image_urls")
     @classmethod
     def validate_image_urls(cls, values: list[str]) -> list[str]:
+        """
+        Check that all image links are valid URLs
+        """
         for url in values:
             parts = urlsplit(url)
             if parts.scheme not in {"http", "https"} or not parts.hostname:
@@ -74,23 +68,33 @@ class FigureRecord(BaseModel):
     @field_validator("collected_at")
     @classmethod
     def validate_timestamp(cls, value: str) -> str:
+        """
+        Check that the timestamp includes a timezone
+        """
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError as exc:
             raise ValueError("Expected an ISO 8601 timestamp") from exc
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise ValueError("Timestamp must include a timezone")
-        return value 
+        return value
 
     @model_validator(mode="after")
     def validate_provenance(self) -> FigureRecord:
+        """
+        Check that the figure details match their source
+        """
         root = f"https://www.ipcc.ch/report/ar6/{self.working_group.lower()}/figures/"
         if self.source_collection != root:
             raise ValueError("source_collection does not match working_group")
         if not self.source_url.startswith(root):
-            raise ValueError("source_url is outside the working group's figure collection")
+            raise ValueError(
+                "source_url is outside the working group's figure collection"
+            )
         if self.source_url == root:
-            raise ValueError("source_url must identify a figure, not the collection root")
+            raise ValueError(
+                "source_url must identify a figure, not the collection root"
+            )
 
         relative_path = urlsplit(self.source_url).path.removeprefix(urlsplit(root).path)
         segments = [segment for segment in relative_path.split("/") if segment]
@@ -104,6 +108,6 @@ class FigureRecord(BaseModel):
     @property
     def has_caption(self) -> bool:
         """
-        Whether caption text is available for downstream concept extraction
+        Check if the figure has a non empty caption
         """
         return bool(self.caption and self.caption.strip())

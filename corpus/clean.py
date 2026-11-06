@@ -1,13 +1,8 @@
 """
-Clean validated IPCC AR6 figure records without modifying raw data
+Cleans and checks collected IPCC figure records
 
-- Validate records using the Phase 2 FigureRecord schema
-- Remove known IPCC footer images from figure image candidates
-- Remove duplicate image URLs while preserving their order
-- Flag missing captions and images without adding replacements
-- Detect duplicate figure records and report invalid input
-
-Does not scrape, download images, modify scientific captions, read or write files or create the SQLite database
+Removes unwanted and duplicate image links, handles repeated figures
+and keeps track of issues found during cleaning
 """
 
 from __future__ import annotations
@@ -20,7 +15,6 @@ from pydantic import ValidationError
 
 from corpus.schemas import FigureRecord
 
-
 _DECORATIVE_FILENAMES = frozenset(
     {"footer-left.png", "footer-right.png", "footer-center.png", "footer-centre.png"}
 )
@@ -28,7 +22,7 @@ _DECORATIVE_FILENAMES = frozenset(
 
 class CleanFigure(FigureRecord):
     """
-    A source backed figure with cleaned image references and explicit status
+    Store a cleaned figure with its caption and image status
     """
 
     caption_status: Literal["available", "missing"]
@@ -38,7 +32,7 @@ class CleanFigure(FigureRecord):
 @dataclass(frozen=True, slots=True)
 class CleaningIssue:
     """
-    A rejected or repeated raw record, identified without copying captions
+    Store details of an invalid or duplicate figure record
     """
 
     index: int
@@ -50,7 +44,7 @@ class CleaningIssue:
 @dataclass(frozen=True, slots=True)
 class CleaningResult:
     """
-    Cleaned figures and information needed by the later quality report
+    Store cleaned figures, reported issues and cleaning counts
     """
 
     figures: tuple[CleanFigure, ...]
@@ -62,14 +56,16 @@ class CleaningResult:
     @property
     def summary(self) -> dict[str, int]:
         """
-        Small JSON ready summary; no persistence or report formatting here
+        Return a summary of the figures, issues, and removed image links
         """
         return {
             "input_records": self.input_count,
             "cleaned_figures": len(self.figures),
             "invalid_records": sum(i.code == "invalid_record" for i in self.issues),
             "duplicate_records": sum(i.code == "duplicate_record" for i in self.issues),
-            "missing_captions": sum(f.caption_status == "missing" for f in self.figures),
+            "missing_captions": sum(
+                f.caption_status == "missing" for f in self.figures
+            ),
             "missing_images": sum(f.image_status == "missing" for f in self.figures),
             "removed_decorative_urls": self.removed_decorative_urls,
             "removed_duplicate_image_urls": self.removed_duplicate_image_urls,
@@ -78,7 +74,7 @@ class CleaningResult:
 
 def _is_decorative_image(url: str) -> bool:
     """
-    Recognize known IPCC site furniture not general static hosted images
+    Check if an image URL points to a known decorative site image
     """
     path = urlsplit(url).path.lower()
     return "/static/" in path and path.rsplit("/", 1)[-1] in _DECORATIVE_FILENAMES
@@ -86,7 +82,7 @@ def _is_decorative_image(url: str) -> bool:
 
 def _clean_image_urls(urls: list[str]) -> tuple[list[str], int, int]:
     """
-    Keep real candidates in original order & count each type of removal
+    Remove decorative and repeated image URLs and count the removals
     """
     kept: list[str] = []
     seen: set[str] = set()
@@ -106,9 +102,14 @@ def _clean_image_urls(urls: list[str]) -> tuple[list[str], int, int]:
 
 
 def _clean_validated(record: FigureRecord) -> tuple[CleanFigure, int, int]:
+    """
+    Clean a validated figure and update its image and caption status
+    """
     urls, decorative_removed, duplicates_removed = _clean_image_urls(record.image_urls)
 
-    primary_image = record.image_url if record.image_url in urls else (urls[0] if urls else None)
+    primary_image = (
+        record.image_url if record.image_url in urls else (urls[0] if urls else None)
+    )
 
     cleaned = CleanFigure.model_validate(
         {
@@ -124,7 +125,7 @@ def _clean_validated(record: FigureRecord) -> tuple[CleanFigure, int, int]:
 
 def clean_figure(record: FigureRecord | Mapping[str, Any]) -> CleanFigure:
     """
-    Clean one figure & raise ValidationError for malformed records
+    Validate and clean a single figure record
     """
     validated = FigureRecord.model_validate(record)
     return _clean_validated(validated)[0]
@@ -134,13 +135,7 @@ def clean_figures(
     records: Iterable[FigureRecord | Mapping[str, Any]],
 ) -> CleaningResult:
     """
-    Clean a corpus and deduplicate by provenance derived figure ID
-
-    Exact duplicates are kept once and reported. Conflicting duplicate IDs
-    raise ValueError rather than silently choosing potentially wrong evidence
-
-    Invalid inputs are excluded from processed output and reported; original
-    raw JSON is never changed
+    Clean a collection of figures and report duplicates and invalid records
     """
     figures: dict[str, CleanFigure] = {}
     issues: list[CleaningIssue] = []
@@ -170,7 +165,7 @@ def clean_figures(
         duplicates_removed += repeated
         existing = figures.get(cleaned.figure_id)
         if existing is not None:
-            
+
             without_timestamp = {"collected_at"}
             if existing.model_dump(exclude=without_timestamp) != cleaned.model_dump(
                 exclude=without_timestamp

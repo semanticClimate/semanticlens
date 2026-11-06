@@ -1,17 +1,8 @@
 """
-Build the validated IPCC AR6 figure corpus from three raw WG JSON files
+Builds a SQLite database from the collected IPCC figure data
 
-- Load and clean records using corpus.schemas and corpus.clean
-- Store the cleaned data in SQLite
-- Generate a data quality report
-- Keep the original input JSON files unchanged
-- Do not scrape IPCC, generate captions or check image URL availability
-
-Usage:
-    python -m corpus.build_corpus
-
-Requires:
-    corpus.schemas, corpus.clean and Pydantic 2.x
+Reads and cleans figure records, stores them in the database
+and creates a report on data quality and missing information
 """
 
 from __future__ import annotations
@@ -28,7 +19,6 @@ import tempfile
 from typing import Any
 
 from corpus.clean import CleanFigure, CleaningResult, clean_figures
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKING_GROUPS = ("WG1", "WG2", "WG3")
@@ -78,7 +68,7 @@ INSERT INTO figures (
 
 def _read_raw_figures(raw_dir: Path) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """
-    Load *all* three WG exports & never silently omit a missing input file
+    Read raw figure records from all three working groups and count them
     """
     records: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
@@ -112,6 +102,9 @@ def _read_raw_figures(raw_dir: Path) -> tuple[list[dict[str, Any]], dict[str, in
 
 
 def _figure_row(figure: CleanFigure) -> tuple[str | None, ...]:
+    """
+    Convert a cleaned figure into a row for the database
+    """
     return (
         figure.figure_id,
         figure.schema_version,
@@ -134,7 +127,7 @@ def _figure_row(figure: CleanFigure) -> tuple[str | None, ...]:
 
 def _write_database(path: Path, figures: tuple[CleanFigure, ...]) -> None:
     """
-    Create a self contained relational database in a new temporary file
+    Save cleaned figures and image links to SQLite and check the database
     """
     ordered = sorted(figures, key=lambda item: (item.working_group, item.figure_id))
 
@@ -145,7 +138,7 @@ def _write_database(path: Path, figures: tuple[CleanFigure, ...]) -> None:
         connection.executescript(_CREATE_TABLES)
         connection.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
 
-        with connection:  
+        with connection:
             connection.executemany(_INSERT_FIGURE, (_figure_row(f) for f in ordered))
             connection.executemany(
                 "INSERT INTO figure_images (figure_id, position, image_url) "
@@ -165,14 +158,16 @@ def _write_database(path: Path, figures: tuple[CleanFigure, ...]) -> None:
             raise RuntimeError(f"SQLite integrity check failed: {result}")
         written = connection.execute("SELECT COUNT(*) FROM figures").fetchone()[0]
         if written != len(figures):
-            raise RuntimeError(f"Expected {len(figures)} figures in SQLite, found {written}")
+            raise RuntimeError(
+                f"Expected {len(figures)} figures in SQLite, found {written}"
+            )
 
 
 def _quality_report(
     result: CleaningResult, input_counts: dict[str, int]
 ) -> dict[str, Any]:
     """
-    Create source traceable, JSON serializable figures and issue counts
+    Create a report of figure counts, missing data, and cleaning issues
     """
     figures_by_wg = Counter(f.working_group for f in result.figures)
     missing_captions = Counter(
@@ -182,9 +177,13 @@ def _quality_report(
         f.working_group for f in result.figures if f.image_status == "missing"
     )
     sections = {
-        wg: dict(sorted(Counter(
-            f.section for f in result.figures if f.working_group == wg
-        ).items()))
+        wg: dict(
+            sorted(
+                Counter(
+                    f.section for f in result.figures if f.working_group == wg
+                ).items()
+            )
+        )
         for wg in WORKING_GROUPS
     }
 
@@ -193,7 +192,9 @@ def _quality_report(
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "raw_schema_version": "1.0",
         "database_schema_version": DATABASE_SCHEMA_VERSION,
-        "source_files": {f"{wg.lower()}.json": input_counts[wg] for wg in WORKING_GROUPS},
+        "source_files": {
+            f"{wg.lower()}.json": input_counts[wg] for wg in WORKING_GROUPS
+        },
         "summary": result.summary,
         "figures_by_working_group": {
             wg: {
@@ -228,7 +229,7 @@ def build_corpus(
     report_path: Path = PROJECT_ROOT / "reports" / "corpus_quality.json",
 ) -> dict[str, Any]:
     """
-    Validate all WG files, clean records and safely rebuild database / report
+    Clean the raw figure data, build the database and save the quality report
     """
     raw_dir = Path(raw_dir)
     database_path = Path(database_path)
@@ -243,7 +244,9 @@ def build_corpus(
             f"record {i.index} ({i.figure_id or 'unknown'}): {i.detail}"
             for i in invalid[:3]
         )
-        raise ValueError(f"Cannot build corpus: {len(invalid)} invalid record(s). {sample}")
+        raise ValueError(
+            f"Cannot build corpus: {len(invalid)} invalid record(s). {sample}"
+        )
     if not result.figures:
         raise ValueError("Cannot build an empty corpus")
 
@@ -251,8 +254,12 @@ def build_corpus(
     database_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix=".corpus-build-", dir=database_path.parent) as db_tmp:
-        with tempfile.TemporaryDirectory(prefix=".corpus-report-", dir=report_path.parent) as report_tmp:
+    with tempfile.TemporaryDirectory(
+        prefix=".corpus-build-", dir=database_path.parent
+    ) as db_tmp:
+        with tempfile.TemporaryDirectory(
+            prefix=".corpus-report-", dir=report_path.parent
+        ) as report_tmp:
             pending_db = Path(db_tmp) / "corpus.db"
             pending_report = Path(report_tmp) / "corpus_quality.json"
             _write_database(pending_db, result.figures)
@@ -272,7 +279,9 @@ def main() -> None:
     )
     parser.add_argument("--raw-dir", type=Path, default=PROJECT_ROOT / "data" / "raw")
     parser.add_argument(
-        "--database", type=Path, default=PROJECT_ROOT / "data" / "processed" / "corpus.db"
+        "--database",
+        type=Path,
+        default=PROJECT_ROOT / "data" / "processed" / "corpus.db",
     )
     parser.add_argument(
         "--report", type=Path, default=PROJECT_ROOT / "reports" / "corpus_quality.json"
