@@ -1,16 +1,9 @@
 """
-Collect figure metadata and captions from IPCC AR6 Working Groups I, II and III
+Collects figure details from IPCC AR6 Working Group pages
 
-Installation:
-    pip install requests beautifulsoup4
-
-Usage:
-    python -m collector.collect_figures
-    python -m collector.collect_figures --retry-failed
-
-Note:
-    Respect IPCC's robots.txt and copyright policies.
-    Captions are collected for local research purposes.
+Crawls figure pages, extracts captions and image links and saves
+the collected data as JSON. It also tracks progress so the crawl
+can resume if interrupted
 """
 
 from __future__ import annotations
@@ -34,21 +27,23 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-
 LOGGER = logging.getLogger("ipcc_collector")
 SCHEMA_VERSION = "1.0"
 SITE_ORIGIN = "https://www.ipcc.ch"
 WG_ROOTS = {
-    wg: f"{SITE_ORIGIN}/report/ar6/{wg}/figures/"
-    for wg in ("wg1", "wg2", "wg3")
+    wg: f"{SITE_ORIGIN}/report/ar6/{wg}/figures/" for wg in ("wg1", "wg2", "wg3")
 }
 USER_AGENT = (
     "IPCC-Visual-Knowledge-Graph/0.1 "
     "(+https://github.com/neelkumar01/IPCC-visual-knowledge-graph)"
 )
 COPYRIGHT_URL = "https://www.ipcc.ch/copyright/"
-IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".tif", ".tiff", ".svg"})
-SKIP_SUFFIXES = IMAGE_SUFFIXES | frozenset({".pdf", ".zip", ".csv", ".xlsx", ".docx", ".xml", ".json", ".js", ".css"})
+IMAGE_SUFFIXES = frozenset(
+    {".png", ".jpg", ".jpeg", ".webp", ".gif", ".tif", ".tiff", ".svg"}
+)
+SKIP_SUFFIXES = IMAGE_SUFFIXES | frozenset(
+    {".pdf", ".zip", ".csv", ".xlsx", ".docx", ".xml", ".json", ".js", ".css"}
+)
 CAPTION_HEADING = re.compile(r"^figure\s+caption\s*:?$", re.IGNORECASE)
 FIGURE_LABEL = re.compile(r"^(?:figure\b|box\b|cross.chapter\b|faq\b)", re.IGNORECASE)
 CHAPTER_SLUG = re.compile(r"^chapter-[\w-]+$", re.IGNORECASE)
@@ -57,58 +52,67 @@ MAX_HTML_BYTES = 8_000_000
 
 def utc_timestamp() -> str:
     """
-    UTC ISO 8601 timestamp for provenance and reports
+    Return the current UTC time as a string
     """
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def compact_text(value: str) -> str:
     """
-    Normalize whitespace (including non breaking spaces) without paraphrasing
+    Remove extra spaces and clean up text
     """
     return re.sub(r"\s+", " ", value.replace("\u00a0", " ")).strip()
 
 
 def normalize_url(href: str, base: str) -> str | None:
     """
-    Convert a link into a valid IPCC URL
-
-    - Allow only HTTP/HTTPS links from IPCC websites
-    - Keep the original capitalization of URL paths
-    - Remove query parameters and fragments to avoid duplicate URLs
+    Convert a link into a clean IPCC URL
     """
     if not href or href.strip().startswith(("#", "mailto:", "javascript:", "tel:")):
         return None
     absolute = urljoin(base, href.strip())
     parsed = urlsplit(absolute)
-    if parsed.scheme not in {"http", "https"} or (parsed.hostname or "").lower() not in {"ipcc.ch", "www.ipcc.ch"}:
+    if parsed.scheme not in {"http", "https"} or (
+        parsed.hostname or ""
+    ).lower() not in {"ipcc.ch", "www.ipcc.ch"}:
         return None
     path = re.sub(r"/{2,}", "/", parsed.path)
     if not path:
         path = "/"
-    if Path(path).suffix.lower() not in SKIP_SUFFIXES | {".html", ".htm"} and not path.endswith("/"):
+    if Path(path).suffix.lower() not in SKIP_SUFFIXES | {
+        ".html",
+        ".htm",
+    } and not path.endswith("/"):
         path += "/"
     return urlunsplit(("https", "www.ipcc.ch", path, "", ""))
 
 
 def is_html_in_scope(url: str, wg: str) -> bool:
     """
-    Only follow figure collection pages of this WG, never arbitrary IPCC links
+    Check if a URL belongs to the given working group
     """
     root = WG_ROOTS[wg]
     path = urlsplit(url).path.lower()
-    return url.startswith(root) and Path(path.rstrip("/")).suffix.lower() not in SKIP_SUFFIXES
+    return (
+        url.startswith(root)
+        and Path(path.rstrip("/")).suffix.lower() not in SKIP_SUFFIXES
+    )
 
 
 def discover_links(soup: BeautifulSoup, source_url: str, wg: str) -> list[str]:
     """
-    Find detail pages, chapter indexes, SPM / TS / Atlas and other linked sections
+    Find figure page links within the working group
     """
     found: list[str] = []
     seen: set[str] = set()
     for link in soup.select("a[href]"):
         target = normalize_url(str(link.get("href", "")), source_url)
-        if target and target != source_url and target not in seen and is_html_in_scope(target, wg):
+        if (
+            target
+            and target != source_url
+            and target not in seen
+            and is_html_in_scope(target, wg)
+        ):
             found.append(target)
             seen.add(target)
     return found
@@ -116,7 +120,7 @@ def discover_links(soup: BeautifulSoup, source_url: str, wg: str) -> list[str]:
 
 def caption_heading(soup: BeautifulSoup) -> Tag | None:
     """
-    Locate a figure detail page's explicit caption section
+    Find the figure caption heading on a page
     """
     for heading in soup.find_all(("h2", "h3", "h4", "h5", "h6")):
         if CAPTION_HEADING.match(compact_text(heading.get_text(" ", strip=True))):
@@ -126,11 +130,7 @@ def caption_heading(soup: BeautifulSoup) -> Tag | None:
 
 def _caption_from_siblings(node: Tag) -> tuple[str, str]:
     """
-    Extract the figure caption without including unrelated content
-
-    - Stop when the caption section ends
-    - Preserve both HTML formatting and plain text for math and subscripts
-    - Ignore scripts, navigation, and styling elements
+    Collect caption text and HTML after a heading
     """
     text_chunks: list[str] = []
     html_chunks: list[str] = []
@@ -145,7 +145,17 @@ def _caption_from_siblings(node: Tag) -> tuple[str, str]:
             continue
         if sibling.name in {"script", "style"}:
             continue
-        if sibling.name in {"h1", "h2", "h3", "h4", "h5", "h6", "nav", "footer", "aside"}:
+        if sibling.name in {
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "nav",
+            "footer",
+            "aside",
+        }:
             break
         if sibling.find(("h1", "h2", "h3", "h4", "h5", "h6", "nav", "footer")):
             break
@@ -162,12 +172,7 @@ def _caption_from_siblings(node: Tag) -> tuple[str, str]:
 
 def extract_caption(soup: BeautifulSoup) -> tuple[str | None, str | None]:
     """
-    Extract the figure caption as plain text and HTML
-
-    - First, check elements immediately after the caption heading
-    - If not found, check elements after its parent container
-    - Finally, look for caption or figcaption elements
-    - Return (None, None) if no caption is found
+    Extract the figure caption from a page
     """
     heading = caption_heading(soup)
     if heading:
@@ -180,7 +185,9 @@ def extract_caption(soup: BeautifulSoup) -> tuple[str | None, str | None]:
                 return text, html
             node = node.parent if isinstance(node.parent, Tag) else None
 
-    for candidate in soup.select("figcaption, .figure-caption, .caption-text, [id='figure-caption']"):
+    for candidate in soup.select(
+        "figcaption, .figure-caption, .caption-text, [id='figure-caption']"
+    ):
         text = compact_text(candidate.get_text(" ", strip=True))
         if text and not CAPTION_HEADING.match(text):
             return text, str(candidate)
@@ -188,18 +195,15 @@ def extract_caption(soup: BeautifulSoup) -> tuple[str | None, str | None]:
 
 
 def _media_link(url: str) -> bool:
+    """
+    Check if a URL points to an image file
+    """
     return Path(urlsplit(url).path.lower()).suffix in IMAGE_SUFFIXES
 
 
 def extract_image_urls(soup: BeautifulSoup, source_url: str) -> list[str]:
     """
-    Find direct URLs to figure images without downloading them
-
-    - Check image download links on IPCC figure pages
-    - Look for images stored in data-src or data-srcset
-    - Accept only images related to the specific figure
-    - Ignore generic images, logos, and unrelated thumbnails
-    - Never guess image filenames or URLs
+    Find image links related to a figure
     """
     ranked: list[tuple[int, str]] = []
     for a in soup.select("a[href]"):
@@ -243,7 +247,7 @@ def extract_image_urls(soup: BeautifulSoup, source_url: str) -> list[str]:
 
 def parse_figure_page(soup: BeautifulSoup, url: str, wg: str) -> dict[str, Any] | None:
     """
-    Extract one figure page record or None for section / navigation pages
+    Extract figure details and return them as a record
     """
     heading = soup.find("h1")
     label = compact_text(heading.get_text(" ", strip=True)) if heading else ""
@@ -258,7 +262,7 @@ def parse_figure_page(soup: BeautifulSoup, url: str, wg: str) -> dict[str, Any] 
 
     caption, caption_html = extract_caption(soup)
     images = extract_image_urls(soup, url)
-    relative_path = urlsplit(url).path[len(urlsplit(WG_ROOTS[wg]).path):].strip("/")
+    relative_path = urlsplit(url).path[len(urlsplit(WG_ROOTS[wg]).path) :].strip("/")
     segments = [segment for segment in relative_path.split("/") if segment]
     chapter = next((s for s in segments if CHAPTER_SLUG.match(s)), None)
     section = "/".join(segments[:-1]) or "root"
@@ -285,7 +289,7 @@ def parse_figure_page(soup: BeautifulSoup, url: str, wg: str) -> dict[str, Any] 
 
 def atomic_json(path: Path, obj: Any) -> None:
     """
-    Replace JSON atomically so an interrupted run cannot corrupt a checkpoint
+    Save JSON data safely using a temporary file
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -296,6 +300,9 @@ def atomic_json(path: Path, obj: Any) -> None:
 
 
 def read_json(path: Path, fallback: Any) -> Any:
+    """
+    Read JSON data or return a fallback if the file is missing
+    """
     if not path.exists():
         return fallback
     with path.open(encoding="utf-8") as handle:
@@ -304,6 +311,10 @@ def read_json(path: Path, fallback: Any) -> Any:
 
 @dataclass(frozen=True)
 class Options:
+    """
+    Store the settings used by the collector
+    """
+
     output_dir: Path = Path("data/raw")
     report_dir: Path = Path("reports")
     delay: float = 1.5
@@ -317,10 +328,13 @@ class Options:
 
 class IPCCClient:
     """
-    Polite, bounded HTTP client & respects robots.txt by default
+    Handle requests to IPCC pages with retries and delays
     """
 
     def __init__(self, options: Options) -> None:
+        """
+        Set up the HTTP session and request settings
+        """
         self.options = options
         self.session = requests.Session()
         retries = Retry(
@@ -334,30 +348,49 @@ class IPCCClient:
         )
         adapter = HTTPAdapter(max_retries=retries)
         self.session.mount("https://", adapter)
-        self.session.headers.update({
-            "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+            }
+        )
         self._last_request = 0.0
         self._robots: RobotFileParser | None = None
         self._effective_delay = options.delay
 
     def __enter__(self) -> "IPCCClient":
+        """
+        Return the client for use in a with block
+        """
         return self
 
     def __exit__(self, *_exc: object) -> None:
+        """
+        Close the HTTP session when finished
+        """
         self.session.close()
 
     def _throttle(self) -> None:
+        """
+        Wait between requests to avoid hitting the site too quickly
+        """
         remaining = self._effective_delay - (time.monotonic() - self._last_request)
         if remaining > 0:
             time.sleep(remaining)
         self._last_request = time.monotonic()
 
     def _get(self, url: str) -> str:
+        """
+        Fetch a page and return its text content
+        """
         self._throttle()
-        with self.session.get(url, timeout=self.options.timeout, stream=True) as response:
-            if (urlsplit(response.url).hostname or "").lower() not in {"ipcc.ch", "www.ipcc.ch"}:
+        with self.session.get(
+            url, timeout=self.options.timeout, stream=True
+        ) as response:
+            if (urlsplit(response.url).hostname or "").lower() not in {
+                "ipcc.ch",
+                "www.ipcc.ch",
+            }:
                 raise ValueError(f"Refusing a redirect outside IPCC: {response.url}")
             response.raise_for_status()
             content_type = response.headers.get("Content-Type", "").lower()
@@ -373,6 +406,9 @@ class IPCCClient:
             return bytes(chunks).decode(encoding, errors="replace")
 
     def load_robots(self) -> None:
+        """
+        Read robots.txt and apply the site's crawling rules
+        """
         if self.options.ignore_robots:
             LOGGER.warning("robots.txt checks explicitly disabled (--ignore-robots)")
             return
@@ -381,13 +417,24 @@ class IPCCClient:
             content = self._get(robots_url)
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
-                LOGGER.info("IPCC robots.txt returned 404; no rules published at this URL")
+                LOGGER.info(
+                    "IPCC robots.txt returned 404; no rules published at this URL"
+                )
                 return
-            raise RuntimeError("Could not verify IPCC robots.txt; stopping (fail closed)") from exc
+            raise RuntimeError(
+                "Could not verify IPCC robots.txt; stopping (fail closed)"
+            ) from exc
         except (requests.RequestException, ValueError) as exc:
-            raise RuntimeError("Could not verify IPCC robots.txt; stopping (fail closed)") from exc
-        if "<html" in content[:2048].lower() or "<!doctype html" in content[:2048].lower():
-            raise RuntimeError("Received an HTML page instead of robots.txt; stopping (fail closed)")
+            raise RuntimeError(
+                "Could not verify IPCC robots.txt; stopping (fail closed)"
+            ) from exc
+        if (
+            "<html" in content[:2048].lower()
+            or "<!doctype html" in content[:2048].lower()
+        ):
+            raise RuntimeError(
+                "Received an HTML page instead of robots.txt; stopping (fail closed)"
+            )
         robot = RobotFileParser()
         robot.set_url(robots_url)
         robot.parse(content.splitlines())
@@ -398,6 +445,9 @@ class IPCCClient:
         LOGGER.info("robots.txt loaded; effective delay %.1fs", self._effective_delay)
 
     def get_html(self, url: str) -> str:
+        """
+        Fetch HTML after checking if crawling is allowed
+        """
         if self._robots is not None and not self._robots.can_fetch(USER_AGENT, url):
             raise PermissionError(f"robots.txt disallows {url}")
         return self._get(url)
@@ -405,7 +455,7 @@ class IPCCClient:
 
 class FigureCollector:
     """
-    Breadth first crawl of WG figure directories with resumable checkpoints
+    Crawl figure pages and save the collected data
     """
 
     def __init__(self, client: IPCCClient, options: Options) -> None:
@@ -413,18 +463,28 @@ class FigureCollector:
         self.options = options
 
     def _paths(self, wg: str) -> tuple[Path, Path]:
+        """Get the output and checkpoint file paths"""
         return (
             self.options.output_dir / f"{wg}.json",
             self.options.report_dir / f"collector_state_{wg}.json",
         )
 
-    def _load_state(self, wg: str) -> tuple[deque[str], set[str], dict[str, dict[str, Any]], dict[str, dict[str, str]]]:
+    def _load_state(
+        self, wg: str
+    ) -> tuple[
+        deque[str], set[str], dict[str, dict[str, Any]], dict[str, dict[str, str]]
+    ]:
+        """
+        Load saved figures and previous crawl progress
+        """
         raw_path, state_path = self._paths(wg)
         if self.options.fresh:
             return deque([WG_ROOTS[wg]]), set(), {}, {}
         rows = read_json(raw_path, [])
         if not isinstance(rows, list):
-            raise ValueError(f"Invalid figure corpus in {raw_path}: expected JSON array")
+            raise ValueError(
+                f"Invalid figure corpus in {raw_path}: expected JSON array"
+            )
         figures = {row["source_url"]: row for row in rows}
         saved = read_json(state_path, {})
         if saved and saved.get("schema_version") != SCHEMA_VERSION:
@@ -435,31 +495,52 @@ class FigureCollector:
         if self.options.retry_failed:
             pending.extend(url for url in failures if url not in visited)
             failures.clear()
-        
+
         if not saved:
             pending = deque([WG_ROOTS[wg]])
         return pending, visited, figures, failures
 
-    def _save(self, wg: str, pending: Iterable[str], visited: set[str], figures: dict[str, dict[str, Any]], failures: dict[str, dict[str, str]]) -> None:
+    def _save(
+        self,
+        wg: str,
+        pending: Iterable[str],
+        visited: set[str],
+        figures: dict[str, dict[str, Any]],
+        failures: dict[str, dict[str, str]],
+    ) -> None:
+        """
+        Save collected figures and current crawl progress
+        """
         raw_path, state_path = self._paths(wg)
-        atomic_json(raw_path, sorted(figures.values(), key=lambda row: row["source_url"]))
-        atomic_json(state_path, {
-            "schema_version": SCHEMA_VERSION,
-            "working_group": wg.upper(),
-            "pending": list(pending),
-            "visited": sorted(visited),
-            "failures": failures,
-            "checkpoint_at": utc_timestamp(),
-        })
+        atomic_json(
+            raw_path, sorted(figures.values(), key=lambda row: row["source_url"])
+        )
+        atomic_json(
+            state_path,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "working_group": wg.upper(),
+                "pending": list(pending),
+                "visited": sorted(visited),
+                "failures": failures,
+                "checkpoint_at": utc_timestamp(),
+            },
+        )
 
     def collect(self, wg: str) -> dict[str, Any]:
+        """
+        Crawl a working group and return a collection summary
+        """
         pending, visited, figures, failures = self._load_state(wg)
         queued = set(pending)
         processed_this_run = 0
         root = WG_ROOTS[wg]
 
         while pending:
-            if self.options.max_pages is not None and processed_this_run >= self.options.max_pages:
+            if (
+                self.options.max_pages is not None
+                and processed_this_run >= self.options.max_pages
+            ):
                 break
             url = pending.popleft()
             queued.discard(url)
@@ -469,17 +550,39 @@ class FigureCollector:
             try:
                 html = self.client.get_html(url)
                 soup = BeautifulSoup(html, "html.parser")
-                page_title = compact_text(soup.title.get_text(" ", strip=True)).lower() if soup.title else ""
-                if any(phrase in page_title for phrase in ("just a moment", "access denied", "attention required", "verify you are human")):
-                    raise ValueError(f"Site challenge or blocked response at {url}: {page_title}")
+                page_title = (
+                    compact_text(soup.title.get_text(" ", strip=True)).lower()
+                    if soup.title
+                    else ""
+                )
+                if any(
+                    phrase in page_title
+                    for phrase in (
+                        "just a moment",
+                        "access denied",
+                        "attention required",
+                        "verify you are human",
+                    )
+                ):
+                    raise ValueError(
+                        f"Site challenge or blocked response at {url}: {page_title}"
+                    )
                 for target in discover_links(soup, url, wg):
-                    if target not in visited and target not in queued and target not in failures:
+                    if (
+                        target not in visited
+                        and target not in queued
+                        and target not in failures
+                    ):
                         pending.append(target)
                         queued.add(target)
                 record = parse_figure_page(soup, url, wg)
                 if record:
                     figures[url] = record
-                    LOGGER.info("%s figure %s", wg.upper(), record["figure_label"] or record["figure_id"])
+                    LOGGER.info(
+                        "%s figure %s",
+                        wg.upper(),
+                        record["figure_label"] or record["figure_id"],
+                    )
                 visited.add(url)
                 failures.pop(url, None)
             except (requests.RequestException, PermissionError, ValueError) as exc:
@@ -491,7 +594,12 @@ class FigureCollector:
                 LOGGER.warning("%s failed: %s: %s", wg.upper(), url, exc)
             if processed_this_run % self.options.checkpoint_every == 0:
                 self._save(wg, pending, visited, figures, failures)
-                LOGGER.info("%s checkpoint: %d figures, %d pending", wg.upper(), len(figures), len(pending))
+                LOGGER.info(
+                    "%s checkpoint: %d figures, %d pending",
+                    wg.upper(),
+                    len(figures),
+                    len(pending),
+                )
 
         self._save(wg, pending, visited, figures, failures)
         chapter_counts = Counter(row["section"] for row in figures.values())
@@ -502,40 +610,89 @@ class FigureCollector:
             "visited_pages": len(visited),
             "pages_processed_this_run": processed_this_run,
             "figures_collected": len(figures),
-            "figures_missing_caption": sum(not row.get("caption") for row in figures.values()),
-            "figures_missing_image": sum(not row.get("image_url") for row in figures.values()),
+            "figures_missing_caption": sum(
+                not row.get("caption") for row in figures.values()
+            ),
+            "figures_missing_image": sum(
+                not row.get("image_url") for row in figures.values()
+            ),
             "figures_by_section": dict(sorted(chapter_counts.items())),
             "pending_pages": len(pending),
             "failed_pages": len(failures),
             "failures": failures,
             "raw_data_path": str(self._paths(wg)[0]),
         }
-        LOGGER.info("%s: %d figures; %d pending pages; %d failed", wg.upper(), len(figures), len(pending), len(failures))
+        LOGGER.info(
+            "%s: %d figures; %d pending pages; %d failed",
+            wg.upper(),
+            len(figures),
+            len(pending),
+            len(failures),
+        )
         return result
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--wg", nargs="+", choices=tuple(WG_ROOTS), default=list(WG_ROOTS), help="Working groups to collect (default: all three)")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--wg",
+        nargs="+",
+        choices=tuple(WG_ROOTS),
+        default=list(WG_ROOTS),
+        help="Working groups to collect (default: all three)",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("data/raw"))
     parser.add_argument("--report-dir", type=Path, default=Path("reports"))
-    parser.add_argument("--delay", type=float, default=1.5, help="Minimum seconds between requests (default: 1.5)")
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=1.5,
+        help="Minimum seconds between requests (default: 1.5)",
+    )
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--checkpoint-every", type=int, default=20)
-    parser.add_argument("--max-pages", type=int, help="Process at most N HTML pages per WG in this run (test mode)")
-    parser.add_argument("--fresh", action="store_true", help="Start selected WGs from scratch; replace their saved crawl progress")
-    parser.add_argument("--retry-failed", action="store_true", help="Retry pages previously recorded as failed")
-    parser.add_argument("--ignore-robots", action="store_true", help="Override robots.txt checks ONLY if permission has been verified")
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        help="Process at most N HTML pages per WG in this run (test mode)",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Start selected WGs from scratch; replace their saved crawl progress",
+    )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Retry pages previously recorded as failed",
+    )
+    parser.add_argument(
+        "--ignore-robots",
+        action="store_true",
+        help="Override robots.txt checks ONLY if permission has been verified",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
-    if args.delay < 0 or args.timeout <= 0 or args.checkpoint_every <= 0 or (args.max_pages is not None and args.max_pages <= 0):
-        parser.error("delay must be >= 0; timeout, checkpoint-every and max-pages must be positive")
+    if (
+        args.delay < 0
+        or args.timeout <= 0
+        or args.checkpoint_every <= 0
+        or (args.max_pages is not None and args.max_pages <= 0)
+    ):
+        parser.error(
+            "delay must be >= 0; timeout, checkpoint-every and max-pages must be positive"
+        )
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = arguments(argv)
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
     opts = Options(
         output_dir=args.output_dir,
         report_dir=args.report_dir,
